@@ -5,7 +5,7 @@ const SHELVES = ['superior', 'medio', 'inferior'];
 // ===== JSONBIN CONFIG =====
 const BIN_KEY   = '$2a$10$CepQntPMjjpIwP8UFoBcOujDD9fCzTWAaG0Cu2RHonNpRIcSssQVq';
 const BIN_URL   = 'https://api.jsonbin.io/v3/b';
-let   BIN_ID    = localStorage.getItem('jsonbin_id') || null;
+let   BIN_ID    = '6a21dd0bf5f4af5e29ba2223'; // ID fijo — todos los dispositivos usan este
 
 // ===== ESTADO =====
 let inventory = [];
@@ -38,8 +38,6 @@ async function createBin(data) {
   const json = await res.json();
   return json.metadata?.id || null;
 }
-
-// ===== JSONBIN: LEER =====
 async function readBin() {
   if (!BIN_ID) return null;
   const res = await fetch(`${BIN_URL}/${BIN_ID}/latest`, {
@@ -52,11 +50,6 @@ async function readBin() {
 
 // ===== JSONBIN: GUARDAR =====
 async function writeBin(data) {
-  if (!BIN_ID) {
-    BIN_ID = await createBin(data);
-    if (BIN_ID) localStorage.setItem('jsonbin_id', BIN_ID);
-    else { setSyncStatus('error'); return; }
-  }
   const res = await fetch(`${BIN_URL}/${BIN_ID}`, {
     method: 'PUT',
     headers: {
