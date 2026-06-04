@@ -69,6 +69,13 @@ header h1 {
   color: var(--text-muted);
 }
 
+/* Sync status */
+.sync-status { font-size: 0.82rem; }
+.sync-ok      { color: var(--green) !important; border-color: var(--green) !important; }
+.sync-saving  { color: var(--yellow) !important; border-color: var(--yellow) !important; }
+.sync-error   { color: var(--red) !important; border-color: var(--red) !important; }
+.sync-loading { color: var(--accent) !important; border-color: var(--accent) !important; }
+
 /* ===== PANELS ===== */
 .panel {
   background: var(--surface);

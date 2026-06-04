@@ -2,36 +2,122 @@
 const CONTAINER_TARE = { blanco: 32.50, dorado: 32.60 };
 const SHELVES = ['superior', 'medio', 'inferior'];
 
+// ===== JSONBIN CONFIG =====
+const BIN_KEY   = '$2a$10$CepQntPMjjpIwP8UFoBcOujDD9fCzTWAaG0Cu2RHonNpRIcSssQVq';
+const BIN_URL   = 'https://api.jsonbin.io/v3/b';
+let   BIN_ID    = localStorage.getItem('jsonbin_id') || null;
+
 // ===== ESTADO =====
-// Botella: { id, code, name, color, shelf, container, weightGross, weightNet, addedAt }
 let inventory = [];
 let history   = [];
 let modalCallback = null;
+let saveTimer = null;
+
+// ===== INDICADOR DE SYNC =====
+function setSyncStatus(status) {
+  // status: 'saving' | 'ok' | 'error' | 'loading'
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  const icons = { saving: '🔄 Guardando...', ok: '✅ Sincronizado', error: '⚠️ Sin conexión', loading: '🔄 Cargando...' };
+  el.textContent  = icons[status] || '';
+  el.className    = `sync-status sync-${status}`;
+}
+
+// ===== JSONBIN: CREAR BIN INICIAL =====
+async function createBin(data) {
+  const res = await fetch(BIN_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Master-Key': BIN_KEY,
+      'X-Bin-Name':   'inventario-pisetas',
+      'X-Bin-Private': 'false'
+    },
+    body: JSON.stringify(data)
+  });
+  const json = await res.json();
+  return json.metadata?.id || null;
+}
+
+// ===== JSONBIN: LEER =====
+async function readBin() {
+  if (!BIN_ID) return null;
+  const res = await fetch(`${BIN_URL}/${BIN_ID}/latest`, {
+    headers: { 'X-Master-Key': BIN_KEY }
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.record || null;
+}
+
+// ===== JSONBIN: GUARDAR =====
+async function writeBin(data) {
+  if (!BIN_ID) {
+    BIN_ID = await createBin(data);
+    if (BIN_ID) localStorage.setItem('jsonbin_id', BIN_ID);
+    else { setSyncStatus('error'); return; }
+  }
+  const res = await fetch(`${BIN_URL}/${BIN_ID}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Master-Key': BIN_KEY
+    },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) setSyncStatus('error');
+}
 
 // ===== PERSISTENCIA =====
 function save() {
+  // Guardar local inmediatamente
   localStorage.setItem('inv_bottles', JSON.stringify(inventory));
   localStorage.setItem('inv_history', JSON.stringify(history));
+  // Guardar en la nube con debounce de 800ms para no hacer muchas peticiones
+  setSyncStatus('saving');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      await writeBin({ inventory, history });
+      setSyncStatus('ok');
+    } catch { setSyncStatus('error'); }
+  }, 800);
 }
 
-function load() {
+async function load() {
+  setSyncStatus('loading');
   try {
+    // Intentar cargar desde la nube primero
+    const cloud = await readBin();
+    if (cloud && cloud.inventory) {
+      inventory = cloud.inventory;
+      history   = cloud.history || [];
+    } else {
+      // Si no hay nube, cargar de localStorage
+      inventory = JSON.parse(localStorage.getItem('inv_bottles')) || [];
+      history   = JSON.parse(localStorage.getItem('inv_history')) || [];
+    }
+  } catch {
+    // Si falla la red, usar localStorage
     inventory = JSON.parse(localStorage.getItem('inv_bottles')) || [];
     history   = JSON.parse(localStorage.getItem('inv_history')) || [];
-    // Migrar botellas antiguas
-    inventory.forEach(b => {
-      if (!b.shelf)      b.shelf      = 'medio';
-      if (!b.name)       b.name       = '';
-      if (!b.color)      b.color      = '#4f8ef7';
-      if (!b.container)  b.container  = 'blanco';
-      // Si solo tiene weight (versión vieja), usarlo como bruto y calcular neto
-      if (b.weightGross === undefined) {
-        b.weightGross = b.weight || 0;
-        b.weightNet   = Math.max(0, b.weightGross - CONTAINER_TARE[b.container]);
-        delete b.weight;
-      }
-    });
-  } catch { inventory = []; history = []; }
+    setSyncStatus('error');
+  }
+
+  // Migrar datos antiguos
+  inventory.forEach(b => {
+    if (!b.shelf)     b.shelf     = 'medio';
+    if (!b.name)      b.name      = '';
+    if (!b.color)     b.color     = '#4f8ef7';
+    if (!b.container) b.container = 'blanco';
+    if (b.weightGross === undefined) {
+      b.weightGross = b.weight || 0;
+      b.weightNet   = Math.max(0, b.weightGross - CONTAINER_TARE[b.container]);
+      delete b.weight;
+    }
+  });
+
+  setSyncStatus('ok');
 }
 
 // ===== ID ÚNICO =====
@@ -500,6 +586,7 @@ document.getElementById('edit-modal').addEventListener('click', e => {
 });
 
 // ===== INIT =====
-load();
-renderAll();
-updateStats();
+load().then(() => {
+  renderAll();
+  updateStats();
+});
