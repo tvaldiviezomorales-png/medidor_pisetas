@@ -1,6 +1,39 @@
 // ===== CONSTANTES =====
-const CONTAINER_TARE = { blanco: 32.50, dorado: 32.60 };
 const SHELVES = ['superior', 'medio', 'inferior'];
+const SHELF_LABEL = { superior: '🔼 Superior', medio: '➡️ Medio', inferior: '🔽 Inferior' };
+
+// Tara configurable — se carga de localStorage
+let CONTAINER_TARE = { blanco: 32.50, dorado: 32.60 };
+
+function loadTares() {
+  const saved = localStorage.getItem('container_tare');
+  if (saved) CONTAINER_TARE = JSON.parse(saved);
+  // Actualizar labels en el form
+  const lb = document.getElementById('tare-label-blanco');
+  const ld = document.getElementById('tare-label-dorado');
+  if (lb) lb.textContent = `−${CONTAINER_TARE.blanco.toFixed(2)} g`;
+  if (ld) ld.textContent = `−${CONTAINER_TARE.dorado.toFixed(2)} g`;
+  // Actualizar inputs del panel
+  const ib = document.getElementById('tare-blanco');
+  const id = document.getElementById('tare-dorado');
+  if (ib) ib.value = CONTAINER_TARE.blanco;
+  if (id) id.value = CONTAINER_TARE.dorado;
+}
+
+function saveTares() {
+  const vb = parseFloat(document.getElementById('tare-blanco').value);
+  const vd = parseFloat(document.getElementById('tare-dorado').value);
+  if (isNaN(vb) || vb < 0 || isNaN(vd) || vd < 0) { alert('Valores de tara inválidos.'); return; }
+  CONTAINER_TARE.blanco = vb;
+  CONTAINER_TARE.dorado = vd;
+  localStorage.setItem('container_tare', JSON.stringify(CONTAINER_TARE));
+  loadTares();
+  // Recalcular todos los pesos netos con la nueva tara
+  inventory.forEach(b => { b.weightNet = calcNet(b.weightGross, b.container); });
+  save();
+  renderAll();
+  alert('✅ Taras actualizadas. Pesos netos recalculados.');
+}
 
 // ===== JSONBIN CONFIG =====
 const BIN_KEY   = '$2a$10$CepQntPMjjpIwP8UFoBcOujDD9fCzTWAaG0Cu2RHonNpRIcSssQVq';
@@ -578,8 +611,136 @@ document.getElementById('edit-modal').addEventListener('click', e => {
   if (e.target === document.getElementById('edit-modal')) closeEditModal();
 });
 
+// ===== EXCEL: IMPORTAR =====
+function importExcel(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb   = XLSX.read(e.target.result, { type: 'array' });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+      if (rows.length === 0) { alert('El archivo está vacío.'); return; }
+
+      let added = 0;
+      rows.forEach(row => {
+        // Aceptar columnas en español o inglés, mayúsculas o minúsculas
+        const code      = String(row['Código'] || row['Codigo'] || row['code'] || '').trim().toUpperCase();
+        const name      = String(row['Nombre'] || row['name'] || '').trim();
+        const color     = String(row['Color']  || row['color'] || '#4f8ef7').trim();
+        const container = String(row['Envase'] || row['Piseta'] || row['container'] || 'blanco').trim().toLowerCase();
+        const shelf     = String(row['Gabineta'] || row['shelf'] || 'medio').trim().toLowerCase();
+        const gross     = parseFloat(row['Peso Bruto'] || row['Peso'] || row['weight'] || 0);
+
+        if (!code || isNaN(gross) || gross <= 0) return; // saltar filas incompletas
+
+        const cont  = ['blanco','dorado'].includes(container) ? container : 'blanco';
+        const shf   = ['superior','medio','inferior'].includes(shelf) ? shelf : 'medio';
+        const net   = calcNet(gross, cont);
+
+        inventory.push({
+          id: uid(), code, name,
+          color: /^#[0-9a-fA-F]{3,6}$/.test(color) ? color : '#4f8ef7',
+          shelf: shf, container: cont,
+          weightGross: gross, weightNet: net,
+          addedAt: new Date().toISOString()
+        });
+        added++;
+      });
+
+      if (added === 0) { alert('No se encontraron filas válidas. Revisa que el archivo tenga las columnas correctas.'); return; }
+
+      history.unshift({
+        type: 'entrada', code: `IMPORTACIÓN EXCEL (${added} botellas)`,
+        name: '', color: '#4f8ef7', shelf: 'varios', container: 'varios',
+        weightGross: 0, weightNet: 0, qty: added,
+        timestamp: new Date().toISOString()
+      });
+
+      save();
+      renderAll();
+      updateStats();
+      alert(`✅ Se importaron ${added} botellas correctamente.`);
+      event.target.value = ''; // reset input
+    } catch(err) {
+      alert('Error al leer el archivo. Asegúrate de que sea un .xlsx válido.');
+      console.error(err);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ===== EXCEL: EXPORTAR =====
+function exportExcel() {
+  if (inventory.length === 0) { alert('No hay botellas en el inventario.'); return; }
+
+  const rows = [...inventory]
+    .sort((a, b) => codeSort(a.code, b.code))
+    .map((b, i) => ({
+      'N°':          i + 1,
+      'Código':      b.code,
+      'Nombre':      b.name      || '',
+      'Color (hex)': b.color     || '',
+      'Envase':      b.container || '',
+      'Gabineta':    SHELF_LABEL[b.shelf] || b.shelf,
+      'Peso Bruto (g)': b.weightGross,
+      'Tara (g)':    CONTAINER_TARE[b.container] || 0,
+      'Peso Neto (g)':  parseFloat(b.weightNet.toFixed(3)),
+      'Fecha entrada': b.addedAt ? new Date(b.addedAt).toLocaleDateString('es-MX') : ''
+    }));
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(rows);
+
+  // Ancho de columnas
+  ws['!cols'] = [
+    {wch:5},{wch:16},{wch:28},{wch:12},{wch:10},{wch:16},
+    {wch:16},{wch:10},{wch:16},{wch:14}
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+
+  // Hoja de historial
+  if (history.length > 0) {
+    const hRows = history.map(h => ({
+      'Tipo':    h.type === 'entrada' ? 'Entrada' : 'Salida',
+      'Código':  h.code,
+      'Nombre':  h.name || '',
+      'Envase':  h.container || '',
+      'Gabineta': SHELF_LABEL[h.shelf] || h.shelf || '',
+      'Cantidad': h.qty || 1,
+      'Peso Neto (g)': h.weightNet !== undefined ? parseFloat(h.weightNet.toFixed(3)) : '',
+      'Fecha':   formatTime(h.timestamp)
+    }));
+    const wsH = XLSX.utils.json_to_sheet(hRows);
+    wsH['!cols'] = [{wch:10},{wch:16},{wch:28},{wch:10},{wch:16},{wch:10},{wch:16},{wch:18}];
+    XLSX.utils.book_append_sheet(wb, wsH, 'Historial');
+  }
+
+  const fecha = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `inventario_pisetas_${fecha}.xlsx`);
+}
+
+// ===== EXCEL: PLANTILLA =====
+function downloadTemplate() {
+  const ejemplo = [
+    { 'Código':'F1178-250', 'Nombre':'Amarillo Oro', 'Color (hex)':'#f39c12', 'Envase':'blanco', 'Gabineta':'superior', 'Peso Bruto':282.50 },
+    { 'Código':'M1146',     'Nombre':'Cobre Metálico','Color (hex)':'#b87333','Envase':'dorado', 'Gabineta':'medio',    'Peso Bruto':292.60 },
+    { 'Código':'M7502',     'Nombre':'Rosa Nude',     'Color (hex)':'#e8b4b8','Envase':'blanco', 'Gabineta':'inferior', 'Peso Bruto':278.00 },
+  ];
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(ejemplo);
+  ws['!cols'] = [{wch:16},{wch:28},{wch:12},{wch:10},{wch:12},{wch:14}];
+  XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
+  XLSX.writeFile(wb, 'plantilla_inventario.xlsx');
+}
+
 // ===== INIT =====
 load().then(() => {
+  loadTares();
   renderAll();
   updateStats();
 });

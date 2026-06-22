@@ -5,7 +5,252 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Inventario de Botellas</title>
   <link rel="stylesheet" href="styles.css" />
+  <!-- SheetJS para leer/escribir Excel -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 </head>
+<body>
+  <div class="app">
+    <header>
+      <h1>🧪 Inventario de Botellas</h1>
+      <div class="stats-bar">
+        <span id="total-bottles">0 botellas en stock</span>
+        <span id="total-codes">0 códigos distintos</span>
+        <span id="sync-status" class="sync-status sync-loading">🔄 Cargando...</span>
+      </div>
+    </header>
+
+    <!-- Panel de agregar -->
+    <section class="panel add-panel">
+      <h2>➕ Agregar Botella</h2>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Código</label>
+          <input type="text" id="input-code" placeholder="Ej: F1178-250" autocomplete="off" />
+          <div id="code-suggestions" class="suggestions"></div>
+        </div>
+        <div class="form-group">
+          <label>Nombre</label>
+          <input type="text" id="input-name" placeholder="Ej: Amarillo Oro" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label>Color</label>
+          <div class="color-pick-row">
+            <input type="color" id="input-color" value="#f39c12" />
+            <span id="color-preview" class="color-preview"></span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Envase</label>
+          <div class="container-pick-row">
+            <label class="container-opt" id="opt-blanco">
+              <input type="radio" name="input-container" value="blanco" checked />
+              <span class="container-icon">⬜</span>
+              <span>Blanco<br><small id="tare-label-blanco">−32.50 g</small></span>
+            </label>
+            <label class="container-opt" id="opt-dorado">
+              <input type="radio" name="input-container" value="dorado" />
+              <span class="container-icon">🟨</span>
+              <span>Dorado<br><small id="tare-label-dorado">−32.60 g</small></span>
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Gabineta</label>
+          <select id="input-shelf">
+            <option value="superior">🔼 Superior</option>
+            <option value="medio" selected>➡️ Medio</option>
+            <option value="inferior">🔽 Inferior</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Peso bruto (g)</label>
+          <input type="number" id="input-weight" placeholder="Ej: 282.50" min="0" step="0.001" oninput="updateNetPreview()" />
+        </div>
+        <div class="form-group net-preview-group">
+          <label>Peso neto</label>
+          <div class="net-preview" id="net-preview">— g</div>
+        </div>
+        <div class="form-group">
+          <label>Cantidad</label>
+          <input type="number" id="input-qty" value="1" min="1" max="50" />
+        </div>
+        <button class="btn btn-add" onclick="addBottles()">Agregar</button>
+      </div>
+    </section>
+
+    <!-- ===== PANEL EXCEL + CONFIGURACIÓN ===== -->
+    <section class="panel tools-panel">
+      <div class="tools-row">
+
+        <!-- Importar Excel -->
+        <div class="tool-group">
+          <h3>📂 Importar Excel</h3>
+          <p class="tool-desc">Carga un archivo .xlsx con columnas: Código, Nombre, Color (hex), Envase, Gabineta, Peso Bruto</p>
+          <label class="btn btn-import" for="excel-import">📥 Seleccionar archivo</label>
+          <input type="file" id="excel-import" accept=".xlsx,.xls" style="display:none" onchange="importExcel(event)" />
+          <a class="btn btn-template" onclick="downloadTemplate()">📋 Descargar plantilla</a>
+        </div>
+
+        <!-- Exportar Excel -->
+        <div class="tool-group">
+          <h3>📤 Exportar Excel</h3>
+          <p class="tool-desc">Descarga el inventario completo como archivo .xlsx con todos los datos</p>
+          <button class="btn btn-export" onclick="exportExcel()">📊 Exportar inventario</button>
+        </div>
+
+        <!-- Configurar tara -->
+        <div class="tool-group">
+          <h3>⚖️ Tara de Envases</h3>
+          <p class="tool-desc">Peso del envase vacío que se descuenta del peso bruto</p>
+          <div class="tare-inputs">
+            <div class="tare-row">
+              <span>⬜ Blanco</span>
+              <input type="number" id="tare-blanco" step="0.01" min="0" />
+              <span>g</span>
+            </div>
+            <div class="tare-row">
+              <span>🟨 Dorado</span>
+              <input type="number" id="tare-dorado" step="0.01" min="0" />
+              <span>g</span>
+            </div>
+            <button class="btn btn-add" onclick="saveTares()" style="margin-top:8px">Guardar</button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Filtros y búsqueda -->
+    <section class="panel filter-panel">
+      <div class="filter-row">
+        <input type="text" id="search-input" placeholder="🔍 Buscar por código o nombre..." oninput="renderAll()" />
+        <select id="sort-select" onchange="renderAll()">
+          <option value="code-asc">Código A→Z</option>
+          <option value="code-desc">Código Z→A</option>
+          <option value="weight-asc">Peso ↑</option>
+          <option value="weight-desc">Peso ↓</option>
+        </select>
+        <label class="toggle-label">
+          <input type="checkbox" id="group-toggle" onchange="renderAll()" />
+          Agrupar por código
+        </label>
+      </div>
+    </section>
+
+    <!-- ===== GABINETAS ===== -->
+    <div class="cabinet-wrapper">
+      <section class="cabinet" id="cabinet-superior">
+        <div class="cabinet-header shelf-superior">
+          <span class="cabinet-icon">🔼</span>
+          <span class="cabinet-title">Gabineta Superior</span>
+          <span class="cabinet-count" id="count-superior">0</span>
+        </div>
+        <div class="cabinet-body">
+          <div class="inventory-grid" id="grid-superior"></div>
+          <div class="empty-msg" id="empty-superior" style="display:none">Sin botellas en esta gabineta.</div>
+        </div>
+      </section>
+      <section class="cabinet" id="cabinet-medio">
+        <div class="cabinet-header shelf-medio">
+          <span class="cabinet-icon">➡️</span>
+          <span class="cabinet-title">Gabineta Medio</span>
+          <span class="cabinet-count" id="count-medio">0</span>
+        </div>
+        <div class="cabinet-body">
+          <div class="inventory-grid" id="grid-medio"></div>
+          <div class="empty-msg" id="empty-medio" style="display:none">Sin botellas en esta gabineta.</div>
+        </div>
+      </section>
+      <section class="cabinet" id="cabinet-inferior">
+        <div class="cabinet-header shelf-inferior">
+          <span class="cabinet-icon">🔽</span>
+          <span class="cabinet-title">Gabineta Inferior</span>
+          <span class="cabinet-count" id="count-inferior">0</span>
+        </div>
+        <div class="cabinet-body">
+          <div class="inventory-grid" id="grid-inferior"></div>
+          <div class="empty-msg" id="empty-inferior" style="display:none">Sin botellas en esta gabineta.</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Historial -->
+    <section class="panel history-panel">
+      <h2>📋 Historial de Movimientos</h2>
+      <div id="history-list"></div>
+    </section>
+  </div>
+
+  <!-- Modal de confirmación -->
+  <div id="modal" class="modal" style="display:none">
+    <div class="modal-box">
+      <p id="modal-msg"></p>
+      <div class="modal-actions">
+        <button class="btn btn-danger" id="modal-confirm">Confirmar</button>
+        <button class="btn btn-cancel" onclick="closeModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de edición -->
+  <div id="edit-modal" class="modal" style="display:none">
+    <div class="modal-box edit-modal-box">
+      <h3>✏️ Editar Botella</h3>
+      <input type="hidden" id="edit-id" />
+      <div class="edit-form">
+        <div class="form-group">
+          <label>Nombre</label>
+          <input type="text" id="edit-name" placeholder="Nombre del pigmento" />
+        </div>
+        <div class="form-group">
+          <label>Color</label>
+          <div class="color-pick-row">
+            <input type="color" id="edit-color" />
+            <span id="edit-color-preview" class="color-preview"></span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Envase</label>
+          <div class="container-pick-row">
+            <label class="container-opt" id="edit-opt-blanco">
+              <input type="radio" name="edit-container" value="blanco" />
+              <span class="container-icon">⬜</span>
+              <span>Blanco</span>
+            </label>
+            <label class="container-opt" id="edit-opt-dorado">
+              <input type="radio" name="edit-container" value="dorado" />
+              <span class="container-icon">🟨</span>
+              <span>Dorado</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Peso bruto (g)</label>
+          <input type="number" id="edit-weight" min="0" step="0.001" oninput="updateEditNetPreview()" />
+        </div>
+        <div class="form-group net-preview-group">
+          <label>Peso neto</label>
+          <div class="net-preview" id="edit-net-preview">— g</div>
+        </div>
+        <div class="form-group">
+          <label>Gabineta</label>
+          <select id="edit-shelf">
+            <option value="superior">🔼 Superior</option>
+            <option value="medio">➡️ Medio</option>
+            <option value="inferior">🔽 Inferior</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-actions" style="margin-top:20px">
+        <button class="btn btn-add" onclick="saveEdit()">Guardar</button>
+        <button class="btn btn-cancel" onclick="closeEditModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
 <body>
   <div class="app">
     <header>
