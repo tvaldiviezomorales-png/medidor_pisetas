@@ -45,12 +45,12 @@
             <label class="container-opt" id="opt-blanco">
               <input type="radio" name="input-container" value="blanco" checked />
               <span class="container-icon">⬜</span>
-              <span>Blanco<br><small id="tare-label-blanco">−32.50 g</small></span>
+              <span>Blanco<br><small id="tare-label-blanco">−31.75 g</small></span>
             </label>
             <label class="container-opt" id="opt-dorado">
               <input type="radio" name="input-container" value="dorado" />
               <span class="container-icon">🟨</span>
-              <span>Dorado<br><small id="tare-label-dorado">−32.60 g</small></span>
+              <span>Dorado<br><small id="tare-label-dorado">−31.65 g</small></span>
             </label>
           </div>
         </div>
@@ -96,25 +96,6 @@
           <h3>📤 Exportar Excel</h3>
           <p class="tool-desc">Descarga el inventario completo como archivo .xlsx con todos los datos</p>
           <button class="btn btn-export" onclick="exportExcel()">📊 Exportar inventario</button>
-        </div>
-
-        <!-- Configurar tara -->
-        <div class="tool-group">
-          <h3>⚖️ Tara de Envases</h3>
-          <p class="tool-desc">Peso del envase vacío que se descuenta del peso bruto</p>
-          <div class="tare-inputs">
-            <div class="tare-row">
-              <span>⬜ Blanco</span>
-              <input type="number" id="tare-blanco" step="0.01" min="0" />
-              <span>g</span>
-            </div>
-            <div class="tare-row">
-              <span>🟨 Dorado</span>
-              <input type="number" id="tare-dorado" step="0.01" min="0" />
-              <span>g</span>
-            </div>
-            <button class="btn btn-add" onclick="saveTares()" style="margin-top:8px">Guardar</button>
-          </div>
         </div>
 
       </div>

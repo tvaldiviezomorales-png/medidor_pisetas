@@ -2,38 +2,8 @@
 const SHELVES = ['superior', 'medio', 'inferior'];
 const SHELF_LABEL = { superior: '🔼 Superior', medio: '➡️ Medio', inferior: '🔽 Inferior' };
 
-// Tara configurable — se carga de localStorage
-let CONTAINER_TARE = { blanco: 32.50, dorado: 32.60 };
-
-function loadTares() {
-  const saved = localStorage.getItem('container_tare');
-  if (saved) CONTAINER_TARE = JSON.parse(saved);
-  // Actualizar labels en el form
-  const lb = document.getElementById('tare-label-blanco');
-  const ld = document.getElementById('tare-label-dorado');
-  if (lb) lb.textContent = `−${CONTAINER_TARE.blanco.toFixed(2)} g`;
-  if (ld) ld.textContent = `−${CONTAINER_TARE.dorado.toFixed(2)} g`;
-  // Actualizar inputs del panel
-  const ib = document.getElementById('tare-blanco');
-  const id = document.getElementById('tare-dorado');
-  if (ib) ib.value = CONTAINER_TARE.blanco;
-  if (id) id.value = CONTAINER_TARE.dorado;
-}
-
-function saveTares() {
-  const vb = parseFloat(document.getElementById('tare-blanco').value);
-  const vd = parseFloat(document.getElementById('tare-dorado').value);
-  if (isNaN(vb) || vb < 0 || isNaN(vd) || vd < 0) { alert('Valores de tara inválidos.'); return; }
-  CONTAINER_TARE.blanco = vb;
-  CONTAINER_TARE.dorado = vd;
-  localStorage.setItem('container_tare', JSON.stringify(CONTAINER_TARE));
-  loadTares();
-  // Recalcular todos los pesos netos con la nueva tara
-  inventory.forEach(b => { b.weightNet = calcNet(b.weightGross, b.container); });
-  save();
-  renderAll();
-  alert('✅ Taras actualizadas. Pesos netos recalculados.');
-}
+// Tara fija
+let CONTAINER_TARE = { blanco: 31.75, dorado: 31.65 };
 
 // ===== JSONBIN CONFIG =====
 const BIN_KEY   = '$2a$10$CepQntPMjjpIwP8UFoBcOujDD9fCzTWAaG0Cu2RHonNpRIcSssQVq';
@@ -740,7 +710,6 @@ function downloadTemplate() {
 
 // ===== INIT =====
 load().then(() => {
-  loadTares();
   renderAll();
   updateStats();
 });
