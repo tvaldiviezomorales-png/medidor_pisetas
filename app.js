@@ -693,15 +693,63 @@ function exportExcel() {
 
 // ===== EXCEL: PLANTILLA =====
 function downloadTemplate() {
-  const ejemplo = [
-    { 'Código':'F1178-250', 'Nombre':'Amarillo Oro', 'Envase':'blanco', 'Peso Bruto (g)':282.50, 'Tara (g)':31.75, 'Peso Neto (g)':250.75 },
-    { 'Código':'M1146',     'Nombre':'Cobre Metálico','Envase':'dorado','Peso Bruto (g)':292.60, 'Tara (g)':31.65, 'Peso Neto (g)':260.95 },
-    { 'Código':'M7502',     'Nombre':'Rosa Nude',     'Envase':'blanco','Peso Bruto (g)':278.00, 'Tara (g)':31.75, 'Peso Neto (g)':246.25 },
-  ];
   const wb = XLSX.utils.book_new();
+
+  // ── Hoja de datos (las filas de ejemplo) ──
+  const ejemplo = [
+    { 'Código':'F1178-250', 'Nombre':'Amarillo Oro',  'Envase':'blanco', 'Peso Bruto (g)':282.50 },
+    { 'Código':'M1146',     'Nombre':'Cobre Metálico','Envase':'dorado', 'Peso Bruto (g)':292.60 },
+    { 'Código':'M7502',     'Nombre':'Rosa Nude',     'Envase':'blanco', 'Peso Bruto (g)':278.00 },
+  ];
+
   const ws = XLSX.utils.json_to_sheet(ejemplo);
-  ws['!cols'] = [{wch:16},{wch:28},{wch:10},{wch:16},{wch:10},{wch:14}];
+
+  // Columnas: A=Código B=Nombre C=Envase D=Peso Bruto E=Tara F=Peso Neto
+  // Agregar encabezados de Tara y Peso Neto manualmente
+  ws['E1'] = { v: 'Tara (g)',      t: 's' };
+  ws['F1'] = { v: 'Peso Neto (g)', t: 's' };
+
+  // Fórmulas para filas 2, 3, 4 (las 3 de ejemplo) y dejar hasta fila 50
+  for (let r = 2; r <= 50; r++) {
+    // Tara: SI(C="dorado", 31.65, 31.75)
+    ws[`E${r}`] = { f: `IF(C${r}="dorado",31.65,IF(C${r}="blanco",31.75,""))`, t: 'n' };
+    // Peso Neto: Bruto - Tara  (solo si hay peso bruto)
+    ws[`F${r}`] = { f: `IF(D${r}="","",D${r}-E${r})`, t: 'n' };
+  }
+
+  // Validación desplegable en columna C (Envase) filas 2-50
+  if (!ws['!dataValidations']) ws['!dataValidations'] = [];
+  ws['!dataValidations'].push({
+    sqref: 'C2:C50',
+    type: 'list',
+    formula1: '"blanco,dorado"',
+    showDropDown: false,
+    showErrorMessage: true,
+    errorTitle: 'Valor inválido',
+    error: 'Elige "blanco" o "dorado"'
+  });
+
+  // Ancho de columnas
+  ws['!cols'] = [{wch:16},{wch:28},{wch:10},{wch:16},{wch:10},{wch:16}];
+
+  // Rango total de la hoja
+  ws['!ref'] = `A1:F50`;
+
   XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
+
+  // ── Hoja de referencia (explica los valores) ──
+  const ref = XLSX.utils.aoa_to_sheet([
+    ['Columna',      'Descripción',                         'Valores válidos'],
+    ['Código',       'Código de la piseta',                 'Ej: F1178-250'],
+    ['Nombre',       'Nombre del perfume o pigmento',       'Texto libre'],
+    ['Envase',       'Tipo de envase (desplegable)',         'blanco  ó  dorado'],
+    ['Peso Bruto (g)','Peso total con envase incluido',     'Número con decimales'],
+    ['Tara (g)',     'Se calcula automático según envase',  'blanco=31.75 / dorado=31.65'],
+    ['Peso Neto (g)','Se calcula automático',               'Peso Bruto − Tara'],
+  ]);
+  ref['!cols'] = [{wch:18},{wch:38},{wch:30}];
+  XLSX.utils.book_append_sheet(wb, ref, 'Instrucciones');
+
   XLSX.writeFile(wb, 'plantilla_inventario.xlsx');
 }
 
