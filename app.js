@@ -678,13 +678,12 @@ function exportExcel() {
       'Código':  h.code,
       'Nombre':  h.name || '',
       'Envase':  h.container || '',
-      'Gabineta': SHELF_LABEL[h.shelf] || h.shelf || '',
       'Cantidad': h.qty || 1,
       'Peso Neto (g)': h.weightNet !== undefined ? parseFloat(h.weightNet.toFixed(3)) : '',
       'Fecha':   formatTime(h.timestamp)
     }));
     const wsH = XLSX.utils.json_to_sheet(hRows);
-    wsH['!cols'] = [{wch:10},{wch:16},{wch:28},{wch:10},{wch:16},{wch:10},{wch:16},{wch:18}];
+    wsH['!cols'] = [{wch:10},{wch:16},{wch:28},{wch:10},{wch:10},{wch:16},{wch:18}];
     XLSX.utils.book_append_sheet(wb, wsH, 'Historial');
   }
 
