@@ -653,9 +653,7 @@ function exportExcel() {
       'N°':          i + 1,
       'Código':      b.code,
       'Nombre':      b.name      || '',
-      'Color (hex)': b.color     || '',
       'Envase':      b.container || '',
-      'Gabineta':    SHELF_LABEL[b.shelf] || b.shelf,
       'Peso Bruto (g)': b.weightGross,
       'Tara (g)':    CONTAINER_TARE[b.container] || 0,
       'Peso Neto (g)':  parseFloat(b.weightNet.toFixed(3)),
@@ -667,7 +665,7 @@ function exportExcel() {
 
   // Ancho de columnas
   ws['!cols'] = [
-    {wch:5},{wch:16},{wch:28},{wch:12},{wch:10},{wch:16},
+    {wch:5},{wch:16},{wch:28},{wch:10},
     {wch:16},{wch:10},{wch:16},{wch:14}
   ];
 
@@ -697,13 +695,13 @@ function exportExcel() {
 // ===== EXCEL: PLANTILLA =====
 function downloadTemplate() {
   const ejemplo = [
-    { 'Código':'F1178-250', 'Nombre':'Amarillo Oro', 'Color (hex)':'#f39c12', 'Envase':'blanco', 'Gabineta':'superior', 'Peso Bruto':282.50 },
-    { 'Código':'M1146',     'Nombre':'Cobre Metálico','Color (hex)':'#b87333','Envase':'dorado', 'Gabineta':'medio',    'Peso Bruto':292.60 },
-    { 'Código':'M7502',     'Nombre':'Rosa Nude',     'Color (hex)':'#e8b4b8','Envase':'blanco', 'Gabineta':'inferior', 'Peso Bruto':278.00 },
+    { 'Código':'F1178-250', 'Nombre':'Amarillo Oro', 'Envase':'blanco', 'Peso Bruto (g)':282.50, 'Tara (g)':31.75, 'Peso Neto (g)':250.75 },
+    { 'Código':'M1146',     'Nombre':'Cobre Metálico','Envase':'dorado','Peso Bruto (g)':292.60, 'Tara (g)':31.65, 'Peso Neto (g)':260.95 },
+    { 'Código':'M7502',     'Nombre':'Rosa Nude',     'Envase':'blanco','Peso Bruto (g)':278.00, 'Tara (g)':31.75, 'Peso Neto (g)':246.25 },
   ];
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet(ejemplo);
-  ws['!cols'] = [{wch:16},{wch:28},{wch:12},{wch:10},{wch:12},{wch:14}];
+  ws['!cols'] = [{wch:16},{wch:28},{wch:10},{wch:16},{wch:10},{wch:14}];
   XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
   XLSX.writeFile(wb, 'plantilla_inventario.xlsx');
 }
