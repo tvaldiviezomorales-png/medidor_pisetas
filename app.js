@@ -1,242 +1,399 @@
 // ===== CONSTANTES =====
-const SHELVES = ['superior', 'medio', 'inferior'];
-const SHELF_LABEL = { superior: '🔼 Superior', medio: '➡️ Medio', inferior: '🔽 Inferior' };
+const CONTAINER_TARE = { blanco: 31.75, dorado: 31.65 };
 
-// Tara fija
-let CONTAINER_TARE = { blanco: 31.75, dorado: 31.65 };
+const STORES = [
+  'CALLE 1','LINCE','TRUJILLO','MIRAFLORES','GAMARRA',
+  'GAMARRA 2','JESÚS MARÍA','ATE','ANGAMOS','MAGDALENA',
+  'SANTA ANITA','LA MOLINA'
+];
 
-// ===== JSONBIN CONFIG =====
-const BIN_KEY   = '$2a$10$CepQntPMjjpIwP8UFoBcOujDD9fCzTWAaG0Cu2RHonNpRIcSssQVq';
-const BIN_URL   = 'https://api.jsonbin.io/v3/b';
-let   BIN_ID    = '6a21dd0bf5f4af5e29ba2223'; // ID fijo — todos los dispositivos usan este
+// Bin separado por tienda: { tienda: binId }
+const BIN_KEY    = '$2a$10$CepQntPMjjpIwP8UFoBcOujDD9fCzTWAaG0Cu2RHonNpRIcSssQVq';
+const BIN_URL    = 'https://api.jsonbin.io/v3/b';
+const BINS_INDEX = '6a21dd0bf5f4af5e29ba2223'; // bin maestro que guarda el mapa tienda→binId
 
 // ===== ESTADO =====
-let inventory = [];
-let history   = [];
+let currentStore  = null;  // nombre de la tienda activa
+let storeBinId    = null;  // bin de la tienda activa
+let binsMap       = {};    // { 'ATE': 'binId123', ... }
+let inventory     = [];
+let history       = [];
+let shelves       = [];    // [{ id, name }] — pisos configurables
 let modalCallback = null;
-let saveTimer = null;
+let saveTimer     = null;
 
-// ===== INDICADOR DE SYNC =====
-function setSyncStatus(status) {
-  // status: 'saving' | 'ok' | 'error' | 'loading'
+// ===== JSONBIN =====
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', 'X-Master-Key': BIN_KEY, ...(opts.headers || {}) }
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function readBin(id) {
+  const j = await apiFetch(`${BIN_URL}/${id}/latest`);
+  return j.record;
+}
+
+async function writeBin(id, data) {
+  await apiFetch(`${BIN_URL}/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+async function createBin(name, data) {
+  const j = await apiFetch(BIN_URL, {
+    method: 'POST',
+    headers: { 'X-Bin-Name': name, 'X-Bin-Private': 'false' },
+    body: JSON.stringify(data)
+  });
+  return j.metadata?.id;
+}
+
+// ===== SYNC STATUS =====
+function setSyncStatus(s) {
   const el = document.getElementById('sync-status');
   if (!el) return;
-  const icons = { saving: '🔄 Guardando...', ok: '✅ Sincronizado', error: '⚠️ Sin conexión', loading: '🔄 Cargando...' };
-  el.textContent  = icons[status] || '';
-  el.className    = `sync-status sync-${status}`;
+  const t = { saving:'🔄 Guardando...', ok:'✅ Sincronizado', error:'⚠️ Sin conexión', loading:'🔄 Cargando...' };
+  el.textContent = t[s] || '';
+  el.className = `sync-status sync-${s}`;
 }
 
-// ===== JSONBIN: CREAR BIN INICIAL =====
-async function createBin(data) {
-  const res = await fetch(BIN_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Master-Key': BIN_KEY,
-      'X-Bin-Name':   'inventario-pisetas',
-      'X-Bin-Private': 'false'
-    },
-    body: JSON.stringify(data)
-  });
-  const json = await res.json();
-  return json.metadata?.id || null;
-}
-async function readBin() {
-  if (!BIN_ID) return null;
-  const res = await fetch(`${BIN_URL}/${BIN_ID}/latest`, {
-    headers: { 'X-Master-Key': BIN_KEY }
-  });
-  if (!res.ok) return null;
-  const json = await res.json();
-  return json.record || null;
-}
-
-// ===== JSONBIN: GUARDAR =====
-async function writeBin(data) {
-  const res = await fetch(`${BIN_URL}/${BIN_ID}`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Master-Key': BIN_KEY
-    },
-    body: JSON.stringify(data)
-  });
-  if (!res.ok) setSyncStatus('error');
-}
-
-// ===== PERSISTENCIA =====
+// ===== GUARDAR =====
 function save() {
-  // Guardar local inmediatamente
-  localStorage.setItem('inv_bottles', JSON.stringify(inventory));
-  localStorage.setItem('inv_history', JSON.stringify(history));
-  // Guardar en la nube con debounce de 800ms para no hacer muchas peticiones
+  localStorage.setItem(`inv_${currentStore}`, JSON.stringify({ inventory, history, shelves }));
   setSyncStatus('saving');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     try {
-      await writeBin({ inventory, history });
+      await writeBin(storeBinId, { inventory, history, shelves });
       setSyncStatus('ok');
     } catch { setSyncStatus('error'); }
   }, 800);
 }
 
-async function load() {
+// ===== CARGAR TIENDA =====
+async function loadStore(storeName) {
+  currentStore = storeName;
   setSyncStatus('loading');
+
+  // Cargar mapa de bins
   try {
-    // Intentar cargar desde la nube primero
-    const cloud = await readBin();
-    if (cloud && cloud.inventory) {
-      inventory = cloud.inventory;
-      history   = cloud.history || [];
+    const idx = await readBin(BINS_INDEX);
+    binsMap = idx?.binsMap || {};
+  } catch { binsMap = {}; }
+
+  storeBinId = binsMap[storeName];
+
+  try {
+    if (storeBinId) {
+      const cloud = await readBin(storeBinId);
+      inventory = cloud?.inventory || [];
+      history   = cloud?.history   || [];
+      shelves   = cloud?.shelves   || defaultShelves();
     } else {
-      // Si no hay nube, cargar de localStorage
-      inventory = JSON.parse(localStorage.getItem('inv_bottles')) || [];
-      history   = JSON.parse(localStorage.getItem('inv_history')) || [];
+      // ATE: migrar datos existentes del bin original
+      if (storeName === 'ATE') {
+        const legacy = await readBin('6a21dd0bf5f4af5e29ba2223');
+        inventory  = legacy?.inventory || [];
+        history    = legacy?.history   || [];
+        shelves    = legacy?.shelves   || defaultShelves();
+        // Migrar shelf ids viejos al nuevo formato
+        const shelfMap = { superior: 'piso-1', medio: 'piso-2', inferior: 'piso-3' };
+        if (!shelves.find(s => s.id === 'piso-1')) shelves = defaultShelves();
+        inventory.forEach(b => { if (shelfMap[b.shelf]) b.shelf = shelfMap[b.shelf]; });
+        // Guardar en bin propio de ATE
+        storeBinId = await createBin('pisetas-ATE', { inventory, history, shelves });
+        binsMap['ATE'] = storeBinId;
+        await writeBin('6a21dd0bf5f4af5e29ba2223', { binsMap });
+      } else {
+        shelves    = defaultShelves();
+        storeBinId = await createBin(`pisetas-${storeName}`, { inventory: [], history: [], shelves });
+        binsMap[storeName] = storeBinId;
+        await writeBin('6a21dd0bf5f4af5e29ba2223', { binsMap });
+      }
     }
   } catch {
-    // Si falla la red, usar localStorage
-    inventory = JSON.parse(localStorage.getItem('inv_bottles')) || [];
-    history   = JSON.parse(localStorage.getItem('inv_history')) || [];
+    const local = JSON.parse(localStorage.getItem(`inv_${storeName}`) || 'null');
+    inventory = local?.inventory || [];
+    history   = local?.history   || [];
+    shelves   = local?.shelves   || defaultShelves();
     setSyncStatus('error');
   }
 
-  // Migrar datos antiguos
-  inventory.forEach(b => {
-    if (!b.shelf)     b.shelf     = 'medio';
-    if (!b.name)      b.name      = '';
-    if (!b.color)     b.color     = '#4f8ef7';
-    if (!b.container) b.container = 'blanco';
-    if (b.weightGross === undefined) {
-      b.weightGross = b.weight || 0;
-      b.weightNet   = Math.max(0, b.weightGross - CONTAINER_TARE[b.container]);
-      delete b.weight;
-    }
-  });
-
+  migrateLegacy();
   setSyncStatus('ok');
 }
 
-// ===== ID ÚNICO =====
-function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function defaultShelves() {
+  return [
+    { id: 'piso-1', name: 'Piso Superior' },
+    { id: 'piso-2', name: 'Piso Medio' },
+    { id: 'piso-3', name: 'Piso Inferior' },
+  ];
 }
+
+function migrateLegacy() {
+  inventory.forEach(b => {
+    if (!b.shelf)     b.shelf     = shelves[0]?.id || 'piso-1';
+    if (!b.name)      b.name      = '';
+    if (!b.brand)     b.brand     = '';
+    if (!b.color)     b.color     = '#c8005a';
+    if (!b.container) b.container = 'blanco';
+    if (b.weightGross === undefined) {
+      b.weightGross = b.weight || 0;
+      b.weightNet   = calcNet(b.weightGross, b.container);
+      delete b.weight;
+    }
+  });
+}
+
+// ===== SELECTOR DE TIENDA =====
+function renderStoreScreen() {
+  const grid = document.getElementById('store-grid');
+  grid.innerHTML = STORES.map(s => `
+    <button class="store-btn" onclick="selectStore('${s}')">
+      <span class="store-icon">🏪</span>
+      <span>${s}</span>
+    </button>
+  `).join('');
+}
+
+async function selectStore(name) {
+  document.getElementById('store-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('store-name-display').textContent = `🏪 ${name}`;
+  localStorage.setItem('last_store', name);
+  await loadStore(name);
+  renderShelvesPanel();
+  renderShelfSelects();
+  renderAll();
+  updateStats();
+}
+
+function changeStore() {
+  document.getElementById('store-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+// ===== PISOS =====
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+function renderShelvesPanel() {
+  const list = document.getElementById('shelves-list');
+  list.innerHTML = shelves.map(s => `
+    <div class="shelf-tag">
+      <span>${s.name}</span>
+      <span class="shelf-count">${inventory.filter(b => b.shelf === s.id).length} uds</span>
+      <button class="shelf-edit-btn" onclick="editShelf('${s.id}')">✏️</button>
+      <button class="shelf-del-btn" onclick="deleteShelf('${s.id}')">🗑️</button>
+    </div>
+  `).join('');
+}
+
+function renderShelfSelects() {
+  ['input-shelf', 'edit-shelf'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = shelves.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+  });
+}
+
+function addShelf() {
+  document.getElementById('shelf-modal-id').value   = '';
+  document.getElementById('shelf-modal-name').value = '';
+  document.getElementById('shelf-modal-title').textContent = '➕ Nuevo Piso';
+  document.getElementById('shelf-modal').style.display = 'flex';
+}
+
+function editShelf(id) {
+  const s = shelves.find(x => x.id === id);
+  if (!s) return;
+  document.getElementById('shelf-modal-id').value   = id;
+  document.getElementById('shelf-modal-name').value = s.name;
+  document.getElementById('shelf-modal-title').textContent = '✏️ Editar Piso';
+  document.getElementById('shelf-modal').style.display = 'flex';
+}
+
+function saveShelf() {
+  const id   = document.getElementById('shelf-modal-id').value;
+  const name = document.getElementById('shelf-modal-name').value.trim();
+  if (!name) { alert('Ingresa un nombre para el piso.'); return; }
+  if (id) {
+    const s = shelves.find(x => x.id === id);
+    if (s) s.name = name;
+  } else {
+    shelves.push({ id: uid(), name });
+  }
+  closeShelfModal();
+  save();
+  renderShelvesPanel();
+  renderShelfSelects();
+  renderAll();
+}
+
+function deleteShelf(id) {
+  const s = shelves.find(x => x.id === id);
+  if (!s) return;
+  const count = inventory.filter(b => b.shelf === id).length;
+  const msg = count > 0
+    ? `¿Eliminar el piso "${s.name}"? Tiene ${count} piseta(s) que se moverán al primer piso.`
+    : `¿Eliminar el piso "${s.name}"?`;
+  openModal(msg, () => {
+    inventory.forEach(b => { if (b.shelf === id) b.shelf = shelves[0]?.id; });
+    shelves = shelves.filter(x => x.id !== id);
+    save();
+    renderShelvesPanel();
+    renderShelfSelects();
+    renderAll();
+  });
+}
+
+function closeShelfModal() { document.getElementById('shelf-modal').style.display = 'none'; }
 
 // ===== PESO NETO =====
-function calcNet(gross, container) {
-  return Math.max(0, gross - (CONTAINER_TARE[container] || 0));
-}
+function calcNet(gross, container) { return Math.max(0, gross - (CONTAINER_TARE[container] || 0)); }
+function getSelectedContainer(name) { return document.querySelector(`input[name="${name}"]:checked`)?.value || 'blanco'; }
 
-function getSelectedContainer(name) {
-  return document.querySelector(`input[name="${name}"]:checked`)?.value || 'blanco';
-}
-
-// ===== PREVIEW PESO NETO (form agregar) =====
 function updateNetPreview() {
-  const gross     = parseFloat(document.getElementById('input-weight').value);
-  const container = getSelectedContainer('input-container');
-  const el        = document.getElementById('net-preview');
+  const gross = parseFloat(document.getElementById('input-weight').value);
+  const cont  = getSelectedContainer('input-container');
+  const el    = document.getElementById('net-preview');
   if (isNaN(gross) || gross <= 0) { el.textContent = '— g'; el.className = 'net-preview'; return; }
-  const net = calcNet(gross, container);
-  el.textContent = `${net.toFixed(3)} g`;
+  el.textContent = `${calcNet(gross, cont).toFixed(3)} g`;
   el.className   = 'net-preview net-ok';
 }
 
-// Actualizar preview cuando cambia el radio de envase
-document.querySelectorAll('input[name="input-container"]').forEach(r =>
-  r.addEventListener('change', () => {
-    updateNetPreview();
-    syncContainerHighlight('input-container', 'opt-blanco', 'opt-dorado');
-  })
-);
-
-// ===== PREVIEW PESO NETO (modal editar) =====
 function updateEditNetPreview() {
-  const gross     = parseFloat(document.getElementById('edit-weight').value);
-  const container = getSelectedContainer('edit-container');
-  const el        = document.getElementById('edit-net-preview');
+  const gross = parseFloat(document.getElementById('edit-weight').value);
+  const cont  = getSelectedContainer('edit-container');
+  const el    = document.getElementById('edit-net-preview');
   if (isNaN(gross) || gross <= 0) { el.textContent = '— g'; el.className = 'net-preview'; return; }
-  const net = calcNet(gross, container);
-  el.textContent = `${net.toFixed(3)} g`;
+  el.textContent = `${calcNet(gross, cont).toFixed(3)} g`;
   el.className   = 'net-preview net-ok';
 }
 
-document.querySelectorAll('input[name="edit-container"]').forEach(r =>
-  r.addEventListener('change', () => {
-    updateEditNetPreview();
-    syncContainerHighlight('edit-container', 'edit-opt-blanco', 'edit-opt-dorado');
-  })
-);
-
-// Resaltar opción seleccionada
-function syncContainerHighlight(radioName, idBlanco, idDorado) {
+function syncContainerHighlight(radioName, idB, idD) {
   const val = getSelectedContainer(radioName);
-  document.getElementById(idBlanco).classList.toggle('selected', val === 'blanco');
-  document.getElementById(idDorado).classList.toggle('selected', val === 'dorado');
+  document.getElementById(idB)?.classList.toggle('selected', val === 'blanco');
+  document.getElementById(idD)?.classList.toggle('selected', val === 'dorado');
 }
+
+document.querySelectorAll('input[name="input-container"]').forEach(r =>
+  r.addEventListener('change', () => { updateNetPreview(); syncContainerHighlight('input-container','opt-blanco','opt-dorado'); })
+);
+document.querySelectorAll('input[name="edit-container"]').forEach(r =>
+  r.addEventListener('change', () => { updateEditNetPreview(); syncContainerHighlight('edit-container','edit-opt-blanco','edit-opt-dorado'); })
+);
 
 // ===== ORDENAR CÓDIGOS =====
 function codeSort(a, b) {
-  const parse = s => {
-    const m = s.match(/^([A-Za-z]*)(\d*)(.*)$/);
-    return [m[1].toUpperCase(), parseInt(m[2] || '0', 10), m[3]];
-  };
-  const [al, an, ar] = parse(a);
-  const [bl, bn, br] = parse(b);
+  const parse = s => { const m = s.match(/^([A-Za-z]*)(\d*)(.*)$/); return [m[1].toUpperCase(), parseInt(m[2]||'0',10), m[3]]; };
+  const [al,an,ar] = parse(a), [bl,bn,br] = parse(b);
   if (al !== bl) return al < bl ? -1 : 1;
   if (an !== bn) return an - bn;
   return ar < br ? -1 : ar > br ? 1 : 0;
 }
 
 // ===== COLOR PREVIEW =====
-document.getElementById('input-color').addEventListener('input', function () {
+document.getElementById('input-color').addEventListener('input', function() {
   document.getElementById('color-preview').style.background = this.value;
 });
-document.getElementById('edit-color').addEventListener('input', function () {
+document.getElementById('edit-color').addEventListener('input', function() {
   document.getElementById('edit-color-preview').style.background = this.value;
 });
 
-window.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('color-preview').style.background =
-    document.getElementById('input-color').value;
-  syncContainerHighlight('input-container', 'opt-blanco', 'opt-dorado');
+// ===== AUTOCOMPLETAR CÓDIGO desde catálogo =====
+function onCodeInput() {
+  const val = document.getElementById('input-code').value.trim().toUpperCase();
+  const box = document.getElementById('code-suggestions');
+
+  // Buscar en catálogo primero
+  const catEntry = lookupCatalog(val);
+  if (catEntry) {
+    document.getElementById('input-name').value  = catEntry.name;
+    document.getElementById('input-brand').value = catEntry.brand;
+  }
+
+  if (!val) { box.innerHTML = ''; return; }
+
+  // Sugerencias: catálogo + inventario existente
+  const fromCatalog = Object.entries(CATALOG)
+    .filter(([k]) => k.includes(val))
+    .slice(0, 6)
+    .map(([k, v]) => ({ code: k, name: v.name, brand: v.brand, fromCatalog: true }));
+
+  const fromInventory = [...new Set(inventory.map(b => b.code))]
+    .filter(c => c.includes(val) && !fromCatalog.find(x => x.code === c))
+    .slice(0, 4)
+    .map(c => { const b = inventory.find(x => x.code === c); return { code: c, name: b?.name||'', brand: b?.brand||'', fromCatalog: false }; });
+
+  const all = [...fromCatalog, ...fromInventory];
+  if (all.length === 0) { box.innerHTML = ''; return; }
+
+  box.innerHTML = all.map(s => `
+    <div class="suggestion-item" onclick="selectCode('${s.code}')">
+      <span class="sug-code">${s.code}</span>
+      <span class="sug-name">${s.name}</span>
+      ${s.brand ? `<span class="sug-brand">${s.brand}</span>` : ''}
+    </div>
+  `).join('');
+}
+
+function selectCode(code) {
+  document.getElementById('input-code').value = code;
+  document.getElementById('code-suggestions').innerHTML = '';
+  const cat = lookupCatalog(code);
+  if (cat) {
+    document.getElementById('input-name').value  = cat.name;
+    document.getElementById('input-brand').value = cat.brand;
+  }
+  const existing = inventory.filter(b => b.code === code);
+  if (existing.length > 0) {
+    const avg = existing.reduce((s,b) => s + b.weightGross, 0) / existing.length;
+    document.getElementById('input-weight').value = avg.toFixed(3);
+    if (existing[0].color) {
+      document.getElementById('input-color').value = existing[0].color;
+      document.getElementById('color-preview').style.background = existing[0].color;
+    }
+    if (existing[0].shelf) document.getElementById('input-shelf').value = existing[0].shelf;
+    if (existing[0].container) {
+      document.querySelector(`input[name="input-container"][value="${existing[0].container}"]`).checked = true;
+      syncContainerHighlight('input-container','opt-blanco','opt-dorado');
+    }
+    updateNetPreview();
+  }
+}
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.form-group')) document.getElementById('code-suggestions').innerHTML = '';
 });
 
-// ===== AGREGAR BOTELLAS =====
+// ===== AGREGAR PISETAS =====
 function addBottles() {
   const code      = document.getElementById('input-code').value.trim().toUpperCase();
   const name      = document.getElementById('input-name').value.trim();
+  const brand     = document.getElementById('input-brand').value.trim();
   const color     = document.getElementById('input-color').value;
   const shelf     = document.getElementById('input-shelf').value;
   const container = getSelectedContainer('input-container');
   const gross     = parseFloat(document.getElementById('input-weight').value);
   const qty       = parseInt(document.getElementById('input-qty').value, 10);
 
-  if (!code)                       { alert('Ingresa un código.'); return; }
-  if (isNaN(gross) || gross <= 0)  { alert('Ingresa un peso bruto válido.'); return; }
-  if (isNaN(qty)   || qty < 1)     { alert('Cantidad mínima: 1.'); return; }
+  if (!code)                      { alert('Ingresa un código.'); return; }
+  if (isNaN(gross) || gross <= 0) { alert('Ingresa un peso bruto válido.'); return; }
+  if (isNaN(qty)   || qty < 1)    { alert('Cantidad mínima: 1.'); return; }
 
   const net = calcNet(gross, container);
-
   for (let i = 0; i < qty; i++) {
-    inventory.push({
-      id: uid(), code, name, color, shelf, container,
-      weightGross: gross, weightNet: net,
-      addedAt: new Date().toISOString()
-    });
+    inventory.push({ id: uid(), code, name, brand, color, shelf, container, weightGross: gross, weightNet: net, addedAt: new Date().toISOString() });
   }
+  history.unshift({ type:'entrada', code, name, brand, color, shelf, container, weightGross: gross, weightNet: net, qty, timestamp: new Date().toISOString() });
 
-  history.unshift({
-    type: 'entrada', code, name, color, shelf, container,
-    weightGross: gross, weightNet: net, qty,
-    timestamp: new Date().toISOString()
-  });
-
-  save();
-  renderAll();
-  updateStats();
-
+  save(); renderAll(); updateStats();
   document.getElementById('input-code').value  = '';
   document.getElementById('input-name').value  = '';
+  document.getElementById('input-brand').value = '';
   document.getElementById('input-weight').value = '';
   document.getElementById('input-qty').value   = '1';
   document.getElementById('net-preview').textContent = '— g';
@@ -244,153 +401,121 @@ function addBottles() {
   document.getElementById('code-suggestions').innerHTML = '';
 }
 
-// ===== USAR (ELIMINAR) BOTELLA =====
+// ===== USAR PISETA =====
 function useBottle(id) {
   const b = inventory.find(x => x.id === id);
   if (!b) return;
-
-  const nameHtml = b.name ? `<em>${b.name}</em><br>` : '';
-  const contIcon = b.container === 'dorado' ? '🟨' : '⬜';
   openModal(
-    `¿Usar botella <strong>${b.code}</strong>?<br>${nameHtml}` +
-    `Envase: ${contIcon} ${b.container}<br>` +
-    `Peso neto: <strong>${b.weightNet.toFixed(3)} g</strong><br><br>` +
-    `Desaparecerá del inventario.`,
+    `¿Usar <strong>${b.code}</strong>${b.name ? ` — ${b.name}` : ''}?<br>` +
+    `Neto: <strong>${b.weightNet.toFixed(3)} g</strong><br>Desaparecerá del inventario.`,
     () => {
       inventory = inventory.filter(x => x.id !== id);
-      history.unshift({
-        type: 'salida', code: b.code, name: b.name, color: b.color,
-        shelf: b.shelf, container: b.container,
-        weightGross: b.weightGross, weightNet: b.weightNet, qty: 1,
-        timestamp: new Date().toISOString()
-      });
-      save();
-      renderAll();
-      updateStats();
+      history.unshift({ type:'salida', code:b.code, name:b.name, brand:b.brand, color:b.color, shelf:b.shelf, container:b.container, weightGross:b.weightGross, weightNet:b.weightNet, qty:1, timestamp:new Date().toISOString() });
+      save(); renderAll(); updateStats();
     }
   );
 }
 
-// ===== EDITAR BOTELLA =====
+// ===== EDITAR PISETA =====
 function openEditModal(id) {
   const b = inventory.find(x => x.id === id);
   if (!b) return;
-
   document.getElementById('edit-id').value    = id;
   document.getElementById('edit-name').value  = b.name  || '';
-  document.getElementById('edit-color').value = b.color || '#4f8ef7';
-  document.getElementById('edit-color-preview').style.background = b.color || '#4f8ef7';
+  document.getElementById('edit-brand').value = b.brand || '';
+  document.getElementById('edit-color').value = b.color || '#c8005a';
+  document.getElementById('edit-color-preview').style.background = b.color || '#c8005a';
   document.getElementById('edit-weight').value = b.weightGross;
-  document.getElementById('edit-shelf').value  = b.shelf || 'medio';
-
-  // Seleccionar radio de envase
+  document.getElementById('edit-shelf').value  = b.shelf;
   const cont = b.container || 'blanco';
   document.querySelector(`input[name="edit-container"][value="${cont}"]`).checked = true;
-  syncContainerHighlight('edit-container', 'edit-opt-blanco', 'edit-opt-dorado');
+  syncContainerHighlight('edit-container','edit-opt-blanco','edit-opt-dorado');
   updateEditNetPreview();
-
   document.getElementById('edit-modal').style.display = 'flex';
 }
 
-function closeEditModal() {
-  document.getElementById('edit-modal').style.display = 'none';
-}
+function closeEditModal() { document.getElementById('edit-modal').style.display = 'none'; }
 
 function saveEdit() {
   const id    = document.getElementById('edit-id').value;
   const b     = inventory.find(x => x.id === id);
   if (!b) return;
-
   const gross = parseFloat(document.getElementById('edit-weight').value);
   if (isNaN(gross) || gross <= 0) { alert('Peso inválido.'); return; }
-
   b.name        = document.getElementById('edit-name').value.trim();
+  b.brand       = document.getElementById('edit-brand').value.trim();
   b.color       = document.getElementById('edit-color').value;
   b.shelf       = document.getElementById('edit-shelf').value;
   b.container   = getSelectedContainer('edit-container');
   b.weightGross = gross;
   b.weightNet   = calcNet(gross, b.container);
-
-  save();
-  closeEditModal();
-  renderAll();
+  save(); closeEditModal(); renderAll();
 }
 
 // ===== RENDER PRINCIPAL =====
 function renderAll() {
-  const search  = document.getElementById('search-input').value.trim().toUpperCase();
-  const sort    = document.getElementById('sort-select').value;
-  const grouped = document.getElementById('group-toggle').checked;
+  const wrapper = document.getElementById('cabinets-wrapper');
+  const search  = document.getElementById('search-input')?.value.trim().toUpperCase() || '';
+  const sort    = document.getElementById('sort-select')?.value || 'code-asc';
+  const grouped = document.getElementById('group-toggle')?.checked || false;
+  wrapper.innerHTML = '';
 
-  SHELVES.forEach(shelf => {
-    const grid     = document.getElementById(`grid-${shelf}`);
-    const emptyMsg = document.getElementById(`empty-${shelf}`);
-    const countEl  = document.getElementById(`count-${shelf}`);
-
+  shelves.forEach(shelf => {
     let items = inventory.filter(b =>
-      b.shelf === shelf &&
-      (b.code.includes(search) || (b.name || '').toUpperCase().includes(search))
+      b.shelf === shelf.id &&
+      (b.code.includes(search) || (b.name||'').toUpperCase().includes(search) || (b.brand||'').toUpperCase().includes(search))
     );
-
-    // Ordenar — siempre de menor a mayor para respetar el orden de derecha a izquierda
-    items = [...items].sort((a, b) => {
-      if (sort === 'code-asc')    return codeSort(a.code, b.code);
-      if (sort === 'code-desc')   return codeSort(b.code, a.code);
-      if (sort === 'weight-asc')  return a.weightNet - b.weightNet;
-      if (sort === 'weight-desc') return b.weightNet - a.weightNet;
+    items = [...items].sort((a,b) => {
+      if (sort==='code-asc')    return codeSort(a.code, b.code);
+      if (sort==='code-desc')   return codeSort(b.code, a.code);
+      if (sort==='weight-asc')  return a.weightNet - b.weightNet;
+      if (sort==='weight-desc') return b.weightNet - a.weightNet;
       return 0;
     });
 
-    countEl.textContent = `${items.length} ud${items.length !== 1 ? 's' : ''}`;
-    grid.innerHTML = '';
+    const section = document.createElement('section');
+    section.className = 'cabinet';
+    section.innerHTML = `
+      <div class="cabinet-header shelf-dynamic">
+        <span class="cabinet-icon">📦</span>
+        <span class="cabinet-title">${shelf.name}</span>
+        <span class="cabinet-count">${items.length} ud${items.length!==1?'s':''}</span>
+      </div>
+      <div class="cabinet-body">
+        <div class="inventory-grid" id="grid-${shelf.id}"></div>
+        <div class="empty-msg" id="empty-${shelf.id}" style="display:${items.length===0?'block':'none'}">Sin pisetas en este piso.</div>
+      </div>
+    `;
+    wrapper.appendChild(section);
 
-    if (items.length === 0) {
-      emptyMsg.style.display = 'block';
-      return;
-    }
-    emptyMsg.style.display = 'none';
-
-    if (grouped) {
-      renderGrouped(grid, items);
-    } else {
-      renderIndividual(grid, items);
+    if (items.length > 0) {
+      const grid = document.getElementById(`grid-${shelf.id}`);
+      if (grouped) renderGrouped(grid, items);
+      else renderIndividual(grid, items);
     }
   });
 
   renderHistory();
 }
 
-// ===== RENDER INDIVIDUAL =====
-// El grid usa direction: rtl para que el código menor quede a la derecha
 function renderIndividual(grid, items) {
-  // Contar cuántas unidades hay por código
   const codeCounters = {};
-  items.forEach(b => { codeCounters[b.code] = (codeCounters[b.code] || 0) + 1; });
-
+  items.forEach(b => { codeCounters[b.code] = (codeCounters[b.code]||0)+1; });
   const codeIndex = {};
-  // items ya viene ordenado de menor a mayor; con RTL el primero (menor) queda a la derecha
   items.forEach(b => {
     if (!codeIndex[b.code]) codeIndex[b.code] = 1;
-    const serial = codeCounters[b.code] > 1 ? `#${codeIndex[b.code]}` : '';
+    const serial = codeCounters[b.code] > 1 ? `<span class="serial-badge">#${codeIndex[b.code]}</span>` : '';
     codeIndex[b.code]++;
-
     const card = document.createElement('div');
     card.className = 'bottle-card';
-    card.style.borderTopColor = b.color || 'var(--accent)';
-
-    const contIcon = b.container === 'dorado' ? '🟨' : '⬜';
-    const tare     = CONTAINER_TARE[b.container] || 0;
-    const colorDot = `<span class="color-dot" style="background:${b.color || '#4f8ef7'}"></span>`;
-    const nameHtml = b.name
-      ? `<div class="bottle-name">${colorDot}${b.name}</div>`
-      : `<div class="bottle-name">${colorDot}<span style="opacity:.4">Sin nombre</span></div>`;
-
+    card.style.borderTopColor = b.color || '#c8005a';
+    const contIcon = b.container==='dorado' ? '🟨' : '⬜';
+    const dot = `<span class="color-dot" style="background:${b.color||'#c8005a'}"></span>`;
     card.innerHTML = `
-      <div class="bottle-code">
-        ${b.code}${serial ? `<span class="serial-badge">${serial}</span>` : ''}
-      </div>
-      ${nameHtml}
-      <div class="bottle-container">${contIcon} <span>${b.container}</span> <span class="tare-tag">−${tare} g</span></div>
+      <div class="bottle-code">${b.code}${serial}</div>
+      <div class="bottle-name">${dot}${b.name||'<span style="opacity:.4">Sin nombre</span>'}</div>
+      ${b.brand ? `<div class="bottle-brand">${b.brand}</div>` : ''}
+      <div class="bottle-container">${contIcon} <span class="tare-tag">−${CONTAINER_TARE[b.container]||0} g</span></div>
       <div class="bottle-weight-block">
         <div class="weight-row gross">Bruto: <span>${b.weightGross.toFixed(3)} g</span></div>
         <div class="weight-row net">Neto: <span>${b.weightNet.toFixed(3)} g</span></div>
@@ -404,52 +529,36 @@ function renderIndividual(grid, items) {
   });
 }
 
-// ===== RENDER AGRUPADO =====
 function renderGrouped(grid, items) {
   const groups = {};
-  items.forEach(b => {
-    if (!groups[b.code]) groups[b.code] = [];
-    groups[b.code].push(b);
-  });
-
+  items.forEach(b => { if(!groups[b.code]) groups[b.code]=[]; groups[b.code].push(b); });
   Object.keys(groups).sort(codeSort).forEach(code => {
-    const bottles      = groups[code];
-    const totalNet     = bottles.reduce((s, b) => s + b.weightNet, 0);
-    const avgNet       = totalNet / bottles.length;
-    const repColor     = bottles[0].color     || '#4f8ef7';
-    const repName      = bottles[0].name      || '';
-
+    const bottles  = groups[code];
+    const totalNet = bottles.reduce((s,b)=>s+b.weightNet,0);
+    const repColor = bottles[0].color || '#c8005a';
+    const repName  = bottles[0].name  || '';
+    const repBrand = bottles[0].brand || '';
     const card = document.createElement('div');
     card.className = 'group-card';
     card.style.borderTopColor = repColor;
-
-    const miniBottles = bottles.map((b, i) => {
-      const contIcon = b.container === 'dorado' ? '🟨' : '⬜';
-      return `
-        <div class="mini-bottle">
-          <span class="color-dot" style="background:${b.color || '#4f8ef7'}"></span>
-          ${bottles.length > 1 ? `<span class="mini-serial">#${i + 1}</span>` : ''}
-          ${contIcon}
-          <span class="mini-weight">${b.weightNet.toFixed(3)} g</span>
-          <button class="mini-use-btn" onclick="useBottle('${b.id}')">Usar</button>
-        </div>
-      `;
+    const mini = bottles.map((b,i) => {
+      const ci = b.container==='dorado'?'🟨':'⬜';
+      return `<div class="mini-bottle">
+        <span class="color-dot" style="background:${b.color||'#c8005a'}"></span>
+        ${bottles.length>1?`<span class="mini-serial">#${i+1}</span>`:''}
+        ${ci}<span class="mini-weight">${b.weightNet.toFixed(3)} g</span>
+        <button class="mini-use-btn" onclick="useBottle('${b.id}')">Usar</button>
+      </div>`;
     }).join('');
-
     card.innerHTML = `
       <div class="group-header">
-        <span class="group-code">
-          <span class="color-dot" style="background:${repColor}"></span>
-          ${code}
-        </span>
+        <span class="group-code"><span class="color-dot" style="background:${repColor}"></span>${code}</span>
         <span class="group-badge">${bottles.length} uds</span>
       </div>
-      ${repName ? `<div class="group-name">${repName}</div>` : ''}
-      <div class="group-info">
-        Neto total: <strong>${totalNet.toFixed(3)} g</strong>
-        &nbsp;·&nbsp; Prom neto: <strong>${avgNet.toFixed(1)} g</strong>
-      </div>
-      <div class="group-bottles">${miniBottles}</div>
+      ${repName  ? `<div class="bottle-name" style="font-size:.85rem;margin-bottom:2px">${repName}</div>` : ''}
+      ${repBrand ? `<div class="bottle-brand">${repBrand}</div>` : ''}
+      <div class="group-info">Neto total: <strong>${totalNet.toFixed(3)} g</strong></div>
+      <div class="group-bottles">${mini}</div>
     `;
     grid.appendChild(card);
   });
@@ -459,31 +568,21 @@ function renderGrouped(grid, items) {
 function renderHistory() {
   const list = document.getElementById('history-list');
   list.innerHTML = '';
-
-  if (history.length === 0) {
-    list.innerHTML = '<div class="empty-msg">Sin movimientos aún.</div>';
-    return;
-  }
-
-  const shelfLabel = { superior: '🔼 Sup', medio: '➡️ Med', inferior: '🔽 Inf' };
-
-  history.slice(0, 80).forEach(h => {
+  if (history.length === 0) { list.innerHTML = '<div class="empty-msg">Sin movimientos aún.</div>'; return; }
+  history.slice(0,80).forEach(h => {
     const item = document.createElement('div');
     item.className = `history-item ${h.type}`;
-    const icon      = h.type === 'entrada' ? '📥' : '📤';
-    const label     = h.type === 'entrada' ? 'Entrada' : 'Salida';
-    const contIcon  = h.container === 'dorado' ? '🟨' : '⬜';
-    const netStr    = h.weightNet !== undefined ? `${h.weightNet.toFixed(3)} g neto` : `${h.weightGross} g`;
-    const detail    = h.type === 'entrada'
-      ? `${label} · ${h.qty} ud${h.qty > 1 ? 's' : ''} · ${netStr} · ${contIcon} · ${shelfLabel[h.shelf] || ''}`
-      : `${label} · ${netStr} · ${contIcon} · ${shelfLabel[h.shelf] || ''}`;
+    const icon  = h.type==='entrada' ? '📥' : '📤';
+    const cont  = h.container==='dorado' ? '🟨' : '⬜';
+    const netStr = h.weightNet !== undefined ? `${h.weightNet.toFixed(3)} g neto` : '';
+    const detail = h.type==='entrada'
+      ? `Entrada · ${h.qty} ud${h.qty>1?'s':''} · ${netStr} · ${cont}`
+      : `Salida · ${netStr} · ${cont}`;
     const dot = h.color ? `<span class="color-dot" style="background:${h.color}"></span>` : '';
-
     item.innerHTML = `
-      <span class="history-icon">${icon}</span>
-      ${dot}
+      <span class="history-icon">${icon}</span>${dot}
       <span class="history-code">${h.code}</span>
-      ${h.name ? `<span class="history-name">${h.name}</span>` : ''}
+      ${h.name?`<span class="history-name">${h.name}</span>`:''}
       <span class="history-detail">${detail}</span>
       <span class="history-time">${formatTime(h.timestamp)}</span>
     `;
@@ -493,247 +592,114 @@ function renderHistory() {
 
 function formatTime(iso) {
   const d = new Date(iso);
-  return d.toLocaleDateString('es-MX', { day:'2-digit', month:'2-digit', year:'2-digit' })
-    + ' ' + d.toLocaleTimeString('es-MX', { hour:'2-digit', minute:'2-digit' });
+  return d.toLocaleDateString('es-MX',{day:'2-digit',month:'2-digit',year:'2-digit'})
+    + ' ' + d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
 }
 
 // ===== STATS =====
 function updateStats() {
   const total = inventory.length;
-  const codes = new Set(inventory.map(b => b.code)).size;
-  document.getElementById('total-bottles').textContent = `${total} botella${total !== 1 ? 's' : ''} en stock`;
-  document.getElementById('total-codes').textContent   = `${codes} código${codes !== 1 ? 's' : ''} distintos`;
+  const codes = new Set(inventory.map(b=>b.code)).size;
+  document.getElementById('total-bottles').textContent = `${total} botella${total!==1?'s':''}`;
+  document.getElementById('total-codes').textContent   = `${codes} esencia${codes!==1?'s':''}`;
 }
 
-// ===== AUTOCOMPLETE =====
-document.getElementById('input-code').addEventListener('input', function () {
-  const val = this.value.trim().toUpperCase();
-  const box = document.getElementById('code-suggestions');
-  if (!val) { box.innerHTML = ''; return; }
-
-  const known   = [...new Set(inventory.map(b => b.code))].sort(codeSort);
-  const matches = known.filter(c => c.includes(val));
-  if (matches.length === 0) { box.innerHTML = ''; return; }
-
-  box.innerHTML = matches.slice(0, 8).map(c => {
-    const b   = inventory.find(x => x.code === c);
-    const dot = b?.color ? `<span class="color-dot" style="background:${b.color}"></span>` : '';
-    const nm  = b?.name  ? `<span style="color:var(--text-muted);font-size:.8rem"> — ${b.name}</span>` : '';
-    return `<div class="suggestion-item" onclick="selectCode('${c}')">${dot}${c}${nm}</div>`;
-  }).join('');
-});
-
-function selectCode(code) {
-  document.getElementById('input-code').value = code;
-  document.getElementById('code-suggestions').innerHTML = '';
-
-  const bottles = inventory.filter(b => b.code === code);
-  if (bottles.length > 0) {
-    const avgGross = bottles.reduce((s, b) => s + b.weightGross, 0) / bottles.length;
-    document.getElementById('input-weight').value = avgGross.toFixed(3);
-    if (bottles[0].name)  document.getElementById('input-name').value  = bottles[0].name;
-    if (bottles[0].color) {
-      document.getElementById('input-color').value = bottles[0].color;
-      document.getElementById('color-preview').style.background = bottles[0].color;
-    }
-    if (bottles[0].shelf)     document.getElementById('input-shelf').value = bottles[0].shelf;
-    if (bottles[0].container) {
-      document.querySelector(`input[name="input-container"][value="${bottles[0].container}"]`).checked = true;
-      syncContainerHighlight('input-container', 'opt-blanco', 'opt-dorado');
-    }
-    updateNetPreview();
-  }
+// ===== EXCEL =====
+function importExcel(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb   = XLSX.read(e.target.result, { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+      let added  = 0;
+      rows.forEach(row => {
+        const code      = String(row['Código']||row['Codigo']||row['code']||'').trim().toUpperCase();
+        const container = String(row['Envase']||row['container']||'blanco').trim().toLowerCase();
+        const gross     = parseFloat(row['Peso Bruto (g)']||row['Peso Bruto']||row['Peso']||0);
+        if (!code || isNaN(gross) || gross<=0) return;
+        // Nombre desde catálogo o columna
+        const cat  = lookupCatalog(code);
+        const name = cat?.name || String(row['Nombre']||row['name']||'').trim();
+        const brand = cat?.brand || String(row['Marca']||'').trim();
+        const cont = ['blanco','dorado'].includes(container) ? container : 'blanco';
+        const shf  = shelves[0]?.id || 'piso-1';
+        inventory.push({ id:uid(), code, name, brand, color:'#c8005a', shelf:shf, container:cont, weightGross:gross, weightNet:calcNet(gross,cont), addedAt:new Date().toISOString() });
+        added++;
+      });
+      if (added===0) { alert('No se encontraron filas válidas.'); return; }
+      history.unshift({ type:'entrada', code:`IMPORTACIÓN (${added})`, name:'', brand:'', color:'#c8005a', shelf:'', container:'', weightGross:0, weightNet:0, qty:added, timestamp:new Date().toISOString() });
+      save(); renderAll(); updateStats();
+      alert(`✅ ${added} pisetas importadas correctamente.`);
+      event.target.value = '';
+    } catch(err) { alert('Error al leer el archivo.'); console.error(err); }
+  };
+  reader.readAsArrayBuffer(file);
 }
 
-document.addEventListener('click', e => {
-  if (!e.target.closest('.form-group')) {
-    document.getElementById('code-suggestions').innerHTML = '';
+function exportExcel() {
+  if (inventory.length===0) { alert('No hay pisetas en el inventario.'); return; }
+  const shelfName = id => shelves.find(s=>s.id===id)?.name || id;
+  const rows = [...inventory].sort((a,b)=>codeSort(a.code,b.code)).map((b,i)=>({
+    'N°': i+1, 'Código': b.code, 'Nombre': b.name||'', 'Marca': b.brand||'',
+    'Envase': b.container, 'Piso': shelfName(b.shelf),
+    'Peso Bruto (g)': b.weightGross, 'Tara (g)': CONTAINER_TARE[b.container]||0,
+    'Peso Neto (g)': parseFloat(b.weightNet.toFixed(3)),
+    'Fecha': b.addedAt ? new Date(b.addedAt).toLocaleDateString('es-MX') : ''
+  }));
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [{wch:4},{wch:14},{wch:28},{wch:20},{wch:8},{wch:14},{wch:14},{wch:8},{wch:14},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+  if (history.length>0) {
+    const hRows = history.map(h=>({ 'Tipo':h.type==='entrada'?'Entrada':'Salida', 'Código':h.code, 'Nombre':h.name||'', 'Envase':h.container||'', 'Cantidad':h.qty||1, 'Peso Neto (g)':h.weightNet!==undefined?parseFloat(h.weightNet.toFixed(3)):'', 'Fecha':formatTime(h.timestamp) }));
+    const wsH = XLSX.utils.json_to_sheet(hRows);
+    wsH['!cols'] = [{wch:8},{wch:14},{wch:28},{wch:8},{wch:8},{wch:14},{wch:18}];
+    XLSX.utils.book_append_sheet(wb, wsH, 'Historial');
   }
-});
+  XLSX.writeFile(wb, `inventario_${currentStore}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
 
-// Enter en el form
-document.getElementById('input-code').addEventListener('keydown',   e => { if (e.key === 'Enter') document.getElementById('input-name').focus(); });
-document.getElementById('input-name').addEventListener('keydown',   e => { if (e.key === 'Enter') document.getElementById('input-weight').focus(); });
-document.getElementById('input-weight').addEventListener('keydown', e => { if (e.key === 'Enter') addBottles(); });
+function downloadTemplate() {
+  const wb = XLSX.utils.book_new();
+  const ws = {};
+  ws['A1']={v:'Código',t:'s'}; ws['B1']={v:'Envase',t:'s'};
+  ws['C1']={v:'Peso Bruto (g)',t:'s'}; ws['D1']={v:'Tara (g)',t:'s'}; ws['E1']={v:'Peso Neto (g)',t:'s'};
+  for (let r=2; r<=100; r++) {
+    ws[`D${r}`] = { f:`IF(B${r}="dorado",31.65,IF(B${r}="blanco",31.75,""))`, t:'n' };
+    ws[`E${r}`] = { f:`IF(C${r}="","",IF(D${r}="","",C${r}-D${r}))`, t:'n' };
+  }
+  ws['!dataValidations'] = [{ sqref:'B2:B100', type:'list', formula1:'"blanco,dorado"', showDropDown:false }];
+  ws['!cols'] = [{wch:14},{wch:10},{wch:16},{wch:10},{wch:16}];
+  ws['!ref'] = 'A1:E100';
+  XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
+  XLSX.writeFile(wb, 'plantilla_pisetas.xlsx');
+}
 
-// ===== MODAL CONFIRMACIÓN =====
+// ===== MODAL =====
 function openModal(msg, onConfirm) {
   document.getElementById('modal-msg').innerHTML = msg;
   document.getElementById('modal').style.display = 'flex';
   modalCallback = onConfirm;
 }
+function closeModal() { document.getElementById('modal').style.display='none'; modalCallback=null; }
+document.getElementById('modal-confirm').addEventListener('click', () => { if(modalCallback) modalCallback(); closeModal(); });
+document.getElementById('modal').addEventListener('click', e => { if(e.target===document.getElementById('modal')) closeModal(); });
+document.getElementById('edit-modal').addEventListener('click', e => { if(e.target===document.getElementById('edit-modal')) closeEditModal(); });
+document.getElementById('shelf-modal').addEventListener('click', e => { if(e.target===document.getElementById('shelf-modal')) closeShelfModal(); });
 
-function closeModal() {
-  document.getElementById('modal').style.display = 'none';
-  modalCallback = null;
-}
-
-document.getElementById('modal-confirm').addEventListener('click', () => {
-  if (modalCallback) modalCallback();
-  closeModal();
-});
-
-document.getElementById('modal').addEventListener('click', e => {
-  if (e.target === document.getElementById('modal')) closeModal();
-});
-
-document.getElementById('edit-modal').addEventListener('click', e => {
-  if (e.target === document.getElementById('edit-modal')) closeEditModal();
-});
-
-// ===== EXCEL: IMPORTAR =====
-function importExcel(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    try {
-      const wb   = XLSX.read(e.target.result, { type: 'array' });
-      const ws   = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-
-      if (rows.length === 0) { alert('El archivo está vacío.'); return; }
-
-      let added = 0;
-      rows.forEach(row => {
-        // Aceptar columnas en español o inglés, mayúsculas o minúsculas
-        const code      = String(row['Código'] || row['Codigo'] || row['code'] || '').trim().toUpperCase();
-        const name      = String(row['Nombre'] || row['name'] || '').trim();
-        const color     = String(row['Color']  || row['color'] || '#4f8ef7').trim();
-        const container = String(row['Envase'] || row['Piseta'] || row['container'] || 'blanco').trim().toLowerCase();
-        const shelf     = String(row['Gabineta'] || row['shelf'] || 'medio').trim().toLowerCase();
-        const gross     = parseFloat(row['Peso Bruto'] || row['Peso'] || row['weight'] || 0);
-
-        if (!code || isNaN(gross) || gross <= 0) return; // saltar filas incompletas
-
-        const cont  = ['blanco','dorado'].includes(container) ? container : 'blanco';
-        const shf   = ['superior','medio','inferior'].includes(shelf) ? shelf : 'medio';
-        const net   = calcNet(gross, cont);
-
-        inventory.push({
-          id: uid(), code, name,
-          color: /^#[0-9a-fA-F]{3,6}$/.test(color) ? color : '#4f8ef7',
-          shelf: shf, container: cont,
-          weightGross: gross, weightNet: net,
-          addedAt: new Date().toISOString()
-        });
-        added++;
-      });
-
-      if (added === 0) { alert('No se encontraron filas válidas. Revisa que el archivo tenga las columnas correctas.'); return; }
-
-      history.unshift({
-        type: 'entrada', code: `IMPORTACIÓN EXCEL (${added} botellas)`,
-        name: '', color: '#4f8ef7', shelf: 'varios', container: 'varios',
-        weightGross: 0, weightNet: 0, qty: added,
-        timestamp: new Date().toISOString()
-      });
-
-      save();
-      renderAll();
-      updateStats();
-      alert(`✅ Se importaron ${added} botellas correctamente.`);
-      event.target.value = ''; // reset input
-    } catch(err) {
-      alert('Error al leer el archivo. Asegúrate de que sea un .xlsx válido.');
-      console.error(err);
-    }
-  };
-  reader.readAsArrayBuffer(file);
-}
-
-// ===== EXCEL: EXPORTAR =====
-function exportExcel() {
-  if (inventory.length === 0) { alert('No hay botellas en el inventario.'); return; }
-
-  const rows = [...inventory]
-    .sort((a, b) => codeSort(a.code, b.code))
-    .map((b, i) => ({
-      'N°':          i + 1,
-      'Código':      b.code,
-      'Nombre':      b.name      || '',
-      'Envase':      b.container || '',
-      'Peso Bruto (g)': b.weightGross,
-      'Tara (g)':    CONTAINER_TARE[b.container] || 0,
-      'Peso Neto (g)':  parseFloat(b.weightNet.toFixed(3)),
-      'Fecha entrada': b.addedAt ? new Date(b.addedAt).toLocaleDateString('es-MX') : ''
-    }));
-
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.json_to_sheet(rows);
-
-  // Ancho de columnas
-  ws['!cols'] = [
-    {wch:5},{wch:16},{wch:28},{wch:10},
-    {wch:16},{wch:10},{wch:16},{wch:14}
-  ];
-
-  XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
-
-  // Hoja de historial
-  if (history.length > 0) {
-    const hRows = history.map(h => ({
-      'Tipo':    h.type === 'entrada' ? 'Entrada' : 'Salida',
-      'Código':  h.code,
-      'Nombre':  h.name || '',
-      'Envase':  h.container || '',
-      'Cantidad': h.qty || 1,
-      'Peso Neto (g)': h.weightNet !== undefined ? parseFloat(h.weightNet.toFixed(3)) : '',
-      'Fecha':   formatTime(h.timestamp)
-    }));
-    const wsH = XLSX.utils.json_to_sheet(hRows);
-    wsH['!cols'] = [{wch:10},{wch:16},{wch:28},{wch:10},{wch:10},{wch:16},{wch:18}];
-    XLSX.utils.book_append_sheet(wb, wsH, 'Historial');
-  }
-
-  const fecha = new Date().toISOString().slice(0,10);
-  XLSX.writeFile(wb, `inventario_pisetas_${fecha}.xlsx`);
-}
-
-// ===== EXCEL: PLANTILLA =====
-function downloadTemplate() {
-  const wb = XLSX.utils.book_new();
-
-  // Hoja vacía — solo encabezados, sin filas de ejemplo
-  const ws = {};
-
-  // Encabezados
-  ws['A1'] = { v: 'Código',         t: 's' };
-  ws['B1'] = { v: 'Nombre',         t: 's' };
-  ws['C1'] = { v: 'Envase',         t: 's' };
-  ws['D1'] = { v: 'Peso Bruto (g)', t: 's' };
-  ws['E1'] = { v: 'Tara (g)',       t: 's' };
-  ws['F1'] = { v: 'Peso Neto (g)',  t: 's' };
-
-  // Fórmulas en filas 2-100 (vacías hasta que el usuario llene)
-  for (let r = 2; r <= 100; r++) {
-    // Tara automática según envase
-    ws[`E${r}`] = { f: `IF(C${r}="dorado",31.65,IF(C${r}="blanco",31.75,""))`, t: 'n' };
-    // Peso neto = bruto - tara (solo si hay peso bruto)
-    ws[`F${r}`] = { f: `IF(D${r}="","",IF(E${r}="","",D${r}-E${r}))`, t: 'n' };
-  }
-
-  // Desplegable en columna C (Envase) filas 2-100
-  ws['!dataValidations'] = [{
-    sqref: 'C2:C100',
-    type: 'list',
-    formula1: '"blanco,dorado"',
-    showDropDown: false,
-    showErrorMessage: true,
-    errorTitle: 'Valor inválido',
-    error: 'Elige "blanco" o "dorado" del desplegable'
-  }];
-
-  ws['!cols'] = [{wch:16},{wch:28},{wch:10},{wch:16},{wch:10},{wch:16}];
-  ws['!ref']  = 'A1:F100';
-
-  XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
-  XLSX.writeFile(wb, 'plantilla_inventario.xlsx');
-}
+// Enter en form
+document.getElementById('input-code').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('input-name').focus(); });
+document.getElementById('input-name').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('input-weight').focus(); });
+document.getElementById('input-weight').addEventListener('keydown', e=>{ if(e.key==='Enter') addBottles(); });
+document.getElementById('shelf-modal-name').addEventListener('keydown', e=>{ if(e.key==='Enter') saveShelf(); });
 
 // ===== INIT =====
-load().then(() => {
-  renderAll();
-  updateStats();
+window.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('color-preview').style.background = document.getElementById('input-color').value;
+  syncContainerHighlight('input-container','opt-blanco','opt-dorado');
+  renderStoreScreen();
+  const last = localStorage.getItem('last_store');
+  if (last) selectStore(last);
 });
