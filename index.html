@@ -157,6 +157,25 @@
     </section>
   </div>
 
+  <!-- Modal código de acceso -->
+  <div id="access-modal" class="modal" style="display:none">
+    <div class="modal-box">
+      <div style="font-size:2rem;margin-bottom:8px">🔐</div>
+      <h3 style="margin-bottom:6px;color:var(--text)" id="access-store-name"></h3>
+      <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:20px">Ingresa el código de acceso de tu tienda</p>
+      <input type="password" id="access-code-input" placeholder="••••" maxlength="6"
+        style="width:100%;text-align:center;font-size:1.6rem;letter-spacing:.3em;padding:12px;margin-bottom:10px"
+        onkeydown="if(event.key==='Enter') verifyAccessCode()" />
+      <p id="access-error" style="display:none;color:var(--red);font-size:.85rem;margin-bottom:12px">
+        ❌ Código incorrecto, intenta de nuevo
+      </p>
+      <div class="modal-actions">
+        <button class="btn btn-add" onclick="verifyAccessCode()">Entrar</button>
+        <button class="btn btn-cancel" onclick="closeAccessModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal confirmación -->
   <div id="modal" class="modal" style="display:none">
     <div class="modal-box">

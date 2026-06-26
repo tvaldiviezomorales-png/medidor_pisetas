@@ -7,10 +7,27 @@ const STORES = [
   'SANTA ANITA','LA MOLINA'
 ];
 
-// Bin separado por tienda: { tienda: binId }
+// Código de acceso por tienda
+const STORE_CODES = {
+  'CALLE 1':    '0101',
+  'LINCE':      '0102',
+  'TRUJILLO':   '0103',
+  'MIRAFLORES': '0104',
+  'GAMARRA':    '0105',
+  'GAMARRA 2':  '0106',
+  'JESÚS MARÍA':'0107',
+  'ATE':        '0108',
+  'ANGAMOS':    '0109',
+  'MAGDALENA':  '0110',
+  'SANTA ANITA':'0111',
+  'LA MOLINA':  '0112',
+};
+
+// Bin separado por tienda — cada tienda tiene su propio bin en JSONBin
+// BINS_INDEX guarda el mapa tienda→binId, pero NO comparte datos entre tiendas
 const BIN_KEY    = '$2a$10$CepQntPMjjpIwP8UFoBcOujDD9fCzTWAaG0Cu2RHonNpRIcSssQVq';
 const BIN_URL    = 'https://api.jsonbin.io/v3/b';
-const BINS_INDEX = '6a21dd0bf5f4af5e29ba2223'; // bin maestro que guarda el mapa tienda→binId
+const BINS_INDEX = '6a21dd0bf5f4af5e29ba2223';
 
 // ===== ESTADO =====
 let currentStore  = null;  // nombre de la tienda activa
@@ -59,14 +76,18 @@ function setSyncStatus(s) {
   el.className = `sync-status sync-${s}`;
 }
 
-// ===== GUARDAR =====
+// ===== GUARDAR — escribe SOLO al bin de la tienda activa =====
 function save() {
+  if (!currentStore || !storeBinId) return; // nunca guardar sin tienda activa
   localStorage.setItem(`inv_${currentStore}`, JSON.stringify({ inventory, history, shelves }));
   setSyncStatus('saving');
   clearTimeout(saveTimer);
+  const storeSnapshot = currentStore; // capturar para evitar race conditions
+  const binSnapshot   = storeBinId;
   saveTimer = setTimeout(async () => {
+    if (currentStore !== storeSnapshot) return; // tienda cambió, cancelar
     try {
-      await writeBin(storeBinId, { inventory, history, shelves });
+      await writeBin(binSnapshot, { inventory, history, shelves });
       setSyncStatus('ok');
     } catch { setSyncStatus('error'); }
   }, 800);
@@ -152,11 +173,41 @@ function migrateLegacy() {
 function renderStoreScreen() {
   const grid = document.getElementById('store-grid');
   grid.innerHTML = STORES.map(s => `
-    <button class="store-btn" onclick="selectStore('${s}')">
+    <button class="store-btn" onclick="promptStoreCode('${s}')">
       <span class="store-icon">🏪</span>
       <span>${s}</span>
     </button>
   `).join('');
+}
+
+function promptStoreCode(name) {
+  // Mostrar modal de código de acceso
+  document.getElementById('access-store-name').textContent = `🏪 ${name}`;
+  document.getElementById('access-code-input').value = '';
+  document.getElementById('access-error').style.display = 'none';
+  document.getElementById('access-modal').style.display = 'flex';
+  document.getElementById('access-code-input').focus();
+  // Guardar tienda pendiente
+  document.getElementById('access-modal').dataset.store = name;
+}
+
+function verifyAccessCode() {
+  const modal = document.getElementById('access-modal');
+  const name  = modal.dataset.store;
+  const input = document.getElementById('access-code-input').value.trim();
+  const err   = document.getElementById('access-error');
+  if (input !== STORE_CODES[name]) {
+    err.style.display = 'block';
+    document.getElementById('access-code-input').value = '';
+    document.getElementById('access-code-input').focus();
+    return;
+  }
+  closeAccessModal();
+  selectStore(name);
+}
+
+function closeAccessModal() {
+  document.getElementById('access-modal').style.display = 'none';
 }
 
 async function selectStore(name) {
@@ -164,6 +215,8 @@ async function selectStore(name) {
   document.getElementById('app').style.display = 'block';
   document.getElementById('store-name-display').textContent = `🏪 ${name}`;
   localStorage.setItem('last_store', name);
+  // Limpiar estado anterior para evitar mezcla entre tiendas
+  inventory = []; history = []; shelves = [];
   await loadStore(name);
   renderShelvesPanel();
   renderShelfSelects();
@@ -172,6 +225,9 @@ async function selectStore(name) {
 }
 
 function changeStore() {
+  // Limpiar estado al cambiar de tienda
+  inventory = []; history = []; shelves = [];
+  currentStore = null; storeBinId = null;
   document.getElementById('store-screen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
 }
@@ -619,12 +675,14 @@ function importExcel(event) {
         const container = String(row['Envase']||row['container']||'blanco').trim().toLowerCase();
         const gross     = parseFloat(row['Peso Bruto (g)']||row['Peso Bruto']||row['Peso']||0);
         if (!code || isNaN(gross) || gross<=0) return;
-        // Nombre desde catálogo o columna
-        const cat  = lookupCatalog(code);
-        const name = cat?.name || String(row['Nombre']||row['name']||'').trim();
+        const cat   = lookupCatalog(code);
+        const name  = cat?.name  || String(row['Nombre']||row['name']||'').trim();
         const brand = cat?.brand || String(row['Marca']||'').trim();
-        const cont = ['blanco','dorado'].includes(container) ? container : 'blanco';
-        const shf  = shelves[0]?.id || 'piso-1';
+        const cont  = ['blanco','dorado'].includes(container) ? container : 'blanco';
+        // Resolver piso: buscar por nombre en los pisos de la tienda
+        const pisoNombre = String(row['Piso del Anaquel']||row['Piso']||row['shelf']||'').trim();
+        const foundShelf = shelves.find(s => s.name.toLowerCase() === pisoNombre.toLowerCase());
+        const shf = foundShelf?.id || shelves[0]?.id || 'piso-1';
         inventory.push({ id:uid(), code, name, brand, color:'#c8005a', shelf:shf, container:cont, weightGross:gross, weightNet:calcNet(gross,cont), addedAt:new Date().toISOString() });
         added++;
       });
@@ -664,17 +722,45 @@ function exportExcel() {
 function downloadTemplate() {
   const wb = XLSX.utils.book_new();
   const ws = {};
-  ws['A1']={v:'Código',t:'s'}; ws['B1']={v:'Envase',t:'s'};
-  ws['C1']={v:'Peso Bruto (g)',t:'s'}; ws['D1']={v:'Tara (g)',t:'s'}; ws['E1']={v:'Peso Neto (g)',t:'s'};
-  for (let r=2; r<=100; r++) {
-    ws[`D${r}`] = { f:`IF(B${r}="dorado",31.65,IF(B${r}="blanco",31.75,""))`, t:'n' };
-    ws[`E${r}`] = { f:`IF(C${r}="","",IF(D${r}="","",C${r}-D${r}))`, t:'n' };
+
+  // Columnas: A=Código B=Envase C=Piso D=Peso Bruto E=Tara F=Peso Neto
+  ws['A1'] = { v:'Código',         t:'s' };
+  ws['B1'] = { v:'Envase',         t:'s' };
+  ws['C1'] = { v:'Piso del Anaquel', t:'s' };
+  ws['D1'] = { v:'Peso Bruto (g)', t:'s' };
+  ws['E1'] = { v:'Tara (g)',        t:'s' };
+  ws['F1'] = { v:'Peso Neto (g)',   t:'s' };
+
+  // Fórmulas automáticas en filas 2-200
+  for (let r = 2; r <= 200; r++) {
+    ws[`E${r}`] = { f:`IF(B${r}="dorado",31.65,IF(B${r}="blanco",31.75,""))`, t:'n' };
+    ws[`F${r}`] = { f:`IF(D${r}="","",IF(E${r}="","",D${r}-E${r}))`, t:'n' };
   }
-  ws['!dataValidations'] = [{ sqref:'B2:B100', type:'list', formula1:'"blanco,dorado"', showDropDown:false }];
-  ws['!cols'] = [{wch:14},{wch:10},{wch:16},{wch:10},{wch:16}];
-  ws['!ref'] = 'A1:E100';
+
+  // Desplegable Envase
+  const validations = [
+    { sqref:'B2:B200', type:'list', formula1:'"blanco,dorado"', showDropDown:false,
+      showErrorMessage:true, errorTitle:'Envase inválido', error:'Elige blanco o dorado' }
+  ];
+
+  // Desplegable Piso — usa los pisos reales de la tienda
+  if (shelves && shelves.length > 0) {
+    const shelfList = shelves.map(s => s.name).join(',');
+    validations.push({
+      sqref:'C2:C200', type:'list',
+      formula1:`"${shelfList}"`,
+      showDropDown:false,
+      showErrorMessage:true, errorTitle:'Piso inválido',
+      error:`Elige uno de: ${shelves.map(s=>s.name).join(', ')}`
+    });
+  }
+
+  ws['!dataValidations'] = validations;
+  ws['!cols'] = [{wch:14},{wch:10},{wch:20},{wch:16},{wch:10},{wch:16}];
+  ws['!ref'] = 'A1:F200';
+
   XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
-  XLSX.writeFile(wb, 'plantilla_pisetas.xlsx');
+  XLSX.writeFile(wb, `plantilla_${currentStore || 'pisetas'}.xlsx`);
 }
 
 // ===== MODAL =====
