@@ -986,3 +986,72 @@ input[type="color"] {
   .header-top { flex-direction: column; align-items: flex-start; }
   .store-badge { width: 100%; justify-content: space-between; }
 }
+
+/* ===== TECLADO NUMÉRICO ACCESO ===== */
+.access-box { max-width: 320px; }
+
+.access-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.access-store {
+  font-size: 0.9rem;
+  color: #c8005a;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+
+.access-display {
+  font-size: 2rem;
+  letter-spacing: 0.3em;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--surface2);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 20px;
+  margin-bottom: 10px;
+  text-align: center;
+  min-height: 62px;
+}
+
+.access-error {
+  color: var(--red);
+  font-size: 0.85rem;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.numpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 0 auto;
+  max-width: 260px;
+}
+
+.numpad-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 72px;
+  height: 72px;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+}
+
+.numpad-btn:hover  { background: var(--border); }
+.numpad-btn:active { transform: scale(0.93); background: var(--accent); color: #fff; }
+
+.numpad-clear { color: var(--yellow); }
+.numpad-del   { color: var(--red); font-size: 1.2rem; }

@@ -123,6 +123,8 @@ async function loadStore(storeName) {
         const shelfMap = { superior: 'piso-1', medio: 'piso-2', inferior: 'piso-3' };
         if (!shelves.find(s => s.id === 'piso-1')) shelves = defaultShelves();
         inventory.forEach(b => { if (shelfMap[b.shelf]) b.shelf = shelfMap[b.shelf]; });
+        // Si inventario vacío, cargar datos semilla
+        if (inventory.length === 0) inventory = getATESeedData();
         // Guardar en bin propio de ATE
         storeBinId = await createBin('pisetas-ATE', { inventory, history, shelves });
         binsMap['ATE'] = storeBinId;
@@ -181,25 +183,46 @@ function renderStoreScreen() {
 }
 
 function promptStoreCode(name) {
-  // Mostrar modal de código de acceso
   document.getElementById('access-store-name').textContent = `🏪 ${name}`;
-  document.getElementById('access-code-input').value = '';
+  document.getElementById('access-display').textContent = '_ _ _ _';
   document.getElementById('access-error').style.display = 'none';
   document.getElementById('access-modal').style.display = 'flex';
-  document.getElementById('access-code-input').focus();
-  // Guardar tienda pendiente
   document.getElementById('access-modal').dataset.store = name;
+  document.getElementById('access-modal').dataset.input = '';
+}
+
+let _numInput = '';
+
+function numpadPress(d) {
+  if (_numInput.length >= 4) return;
+  _numInput += d;
+  const dots = _numInput.split('').map(() => '●').join(' ');
+  const rest  = Array(4 - _numInput.length).fill('_').join(' ');
+  document.getElementById('access-display').textContent = (dots + (rest ? ' ' + rest : '')).trim();
+  document.getElementById('access-error').style.display = 'none';
+  if (_numInput.length === 4) setTimeout(verifyAccessCode, 120);
+}
+
+function numpadDel() {
+  if (!_numInput.length) return;
+  _numInput = _numInput.slice(0, -1);
+  const dots = _numInput.split('').map(() => '●').join(' ');
+  const rest  = Array(4 - _numInput.length).fill('_').join(' ');
+  document.getElementById('access-display').textContent = (dots + (rest ? ' ' + rest : '')).trim() || '_ _ _ _';
+}
+
+function numpadClear() {
+  _numInput = '';
+  document.getElementById('access-display').textContent = '_ _ _ _';
+  document.getElementById('access-error').style.display = 'none';
 }
 
 function verifyAccessCode() {
-  const modal = document.getElementById('access-modal');
-  const name  = modal.dataset.store;
-  const input = document.getElementById('access-code-input').value.trim();
-  const err   = document.getElementById('access-error');
-  if (input !== STORE_CODES[name]) {
-    err.style.display = 'block';
-    document.getElementById('access-code-input').value = '';
-    document.getElementById('access-code-input').focus();
+  const name = document.getElementById('access-modal').dataset.store;
+  if (_numInput !== STORE_CODES[name]) {
+    document.getElementById('access-error').style.display = 'block';
+    _numInput = '';
+    document.getElementById('access-display').textContent = '_ _ _ _';
     return;
   }
   closeAccessModal();
@@ -207,6 +230,7 @@ function verifyAccessCode() {
 }
 
 function closeAccessModal() {
+  _numInput = '';
   document.getElementById('access-modal').style.display = 'none';
 }
 
@@ -679,9 +703,20 @@ function importExcel(event) {
         const name  = cat?.name  || String(row['Nombre']||row['name']||'').trim();
         const brand = cat?.brand || String(row['Marca']||'').trim();
         const cont  = ['blanco','dorado'].includes(container) ? container : 'blanco';
-        // Resolver piso: buscar por nombre en los pisos de la tienda
+        // Resolver piso: buscar por nombre exacto, parcial, o por número (1=primer piso, 2=segundo, etc.)
         const pisoNombre = String(row['Piso del Anaquel']||row['Piso']||row['shelf']||'').trim();
-        const foundShelf = shelves.find(s => s.name.toLowerCase() === pisoNombre.toLowerCase());
+        let foundShelf = null;
+        if (pisoNombre) {
+          // Buscar exacto primero
+          foundShelf = shelves.find(s => s.name.toLowerCase() === pisoNombre.toLowerCase());
+          // Si no, buscar parcial
+          if (!foundShelf) foundShelf = shelves.find(s => s.name.toLowerCase().includes(pisoNombre.toLowerCase()) || pisoNombre.toLowerCase().includes(s.name.toLowerCase()));
+          // Si es número (1, 2, 3...), usar como índice
+          if (!foundShelf && /^\d+$/.test(pisoNombre)) {
+            const idx = parseInt(pisoNombre, 10) - 1;
+            if (idx >= 0 && idx < shelves.length) foundShelf = shelves[idx];
+          }
+        }
         const shf = foundShelf?.id || shelves[0]?.id || 'piso-1';
         inventory.push({ id:uid(), code, name, brand, color:'#c8005a', shelf:shf, container:cont, weightGross:gross, weightNet:calcNet(gross,cont), addedAt:new Date().toISOString() });
         added++;
@@ -780,6 +815,55 @@ document.getElementById('input-code').addEventListener('keydown', e=>{ if(e.key=
 document.getElementById('input-name').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('input-weight').focus(); });
 document.getElementById('input-weight').addEventListener('keydown', e=>{ if(e.key==='Enter') addBottles(); });
 document.getElementById('shelf-modal-name').addEventListener('keydown', e=>{ if(e.key==='Enter') saveShelf(); });
+
+// ===== DATOS SEMILLA ATE =====
+// Se cargan solo si la tienda ATE no tiene datos propios aún
+function getATESeedData() {
+  const t = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  const b = (code, name, brand, shelf, container, gross) => ({
+    id: t(), code, name, brand,
+    color: code.startsWith('F') ? '#c8005a' : '#4f8ef7',
+    shelf, container,
+    weightGross: gross,
+    weightNet: calcNet(gross, container),
+    addedAt: '2026-06-01T00:00:00.000Z'
+  });
+  // shelf ids: piso-1=Superior, piso-2=Medio, piso-3=Inferior
+  return [
+    // ── GABINETA MEDIO ──
+    b('M1184','212 VIP MEN WINS','CAROLINA HERRERA','piso-2','blanco',279.790),
+    b('M1184','212 VIP MEN WINS','CAROLINA HERRERA','piso-2','blanco',279.330),
+    b('M1186','SILVER MOUNTAIN','CREED',            'piso-2','blanco',278.830),
+    b('M1187','ACQUA DI GIO PROFUNDO','GIORGIO ARMANI','piso-2','blanco',279.780),
+    b('M1189','SCANDALL POUR HOMME','JEAN PAUL GAULTIER','piso-2','blanco',279.750),
+    b('M1195','CR7 ORIGINS','CRISTIANO RONALDO',    'piso-2','blanco',278.960),
+    b('M1214','MAN AQUA','JIMMY CHOO',              'piso-2','blanco',278.680),
+    b('M220', 'ANIMALE','ANIMALE',                  'piso-2','dorado',277.020),
+    b('M631', 'ACQUA DE GIO','GIORGIO ARMANI',      'piso-2','dorado',280.340),
+    b('M864', 'LACOSTE POUR HOMME','LACOSTE',       'piso-2','blanco',279.880),
+    b('M898', 'HUGO','HUGO BOSS',                   'piso-2','dorado',277.740),
+    b('M951', 'LIGHT BLUE POUR HOMME','DOLCE&GABBANA','piso-2','blanco',278.900),
+    // ── GABINETA INFERIOR ──
+    b('M1217','ONE MILLION ROYALE','RABANNE',        'piso-3','blanco',279.960),
+    b('M1227','BORN IN ROMA INTENSE','VALENTINO',    'piso-3','blanco',280.150),
+    b('M1227','BORN IN ROMA INTENSE','VALENTINO',    'piso-3','blanco',280.000),
+    b('M1236','ONE MILLION ELIXIR','RABANNE',        'piso-3','dorado',280.700),
+    b('M5002','THE MOST WANTED INTENSE','AZZARO',    'piso-3','blanco',280.500),
+    b('M5002','THE MOST WANTED INTENSE','AZZARO',    'piso-3','blanco',278.990),
+    b('M5007','KHAMRAH QAHWA','LATTAFA',             'piso-3','blanco',280.360),
+    b('M5008','ODYSSEY MANDARIN SKY','ARMAF',        'piso-3','blanco',280.170),
+    b('M5011','BADE\'E AL OUD HONOR & GLORY','LATTAFA','piso-3','blanco',279.870),
+    b('M7503','ALTHAÏR','PARFUMS DE MARLY',          'piso-3','blanco',280.210),
+    b('M7504','STRONGER WITH YOU INTENSELY','GIORGIO ARMANI','piso-3','blanco',279.430),
+    b('M7504','STRONGER WITH YOU INTENSELY','GIORGIO ARMANI','piso-3','blanco',278.860),
+    b('M7505','INVICTUS VICTORY ABSOLU','RABANNE',   'piso-3','blanco',280.040),
+    b('M7508','KHAMRAH','LATTAFA',                   'piso-3','blanco',279.050),
+    b('M7508','KHAMRAH','LATTAFA',                   'piso-3','blanco',279.190),
+    b('M7508','KHAMRAH','LATTAFA',                   'piso-3','blanco',279.870),
+    b('M7508','KHAMRAH','LATTAFA',                   'piso-3','blanco',278.520),
+    b('M7511','CORAL FANTASY','JEAN PAUL GAULTIER',  'piso-3','blanco',280.930),
+  ];
+}
 
 // ===== INIT =====
 window.addEventListener('DOMContentLoaded', () => {
