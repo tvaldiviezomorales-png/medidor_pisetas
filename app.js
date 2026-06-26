@@ -112,6 +112,11 @@ async function loadStore(storeName) {
       inventory = cloud?.inventory || [];
       history   = cloud?.history   || [];
       shelves   = cloud?.shelves   || defaultShelves();
+      // Si ATE tiene bin pero inventario vacío, cargar datos semilla
+      if (storeName === 'ATE' && inventory.length === 0) {
+        inventory = getATESeedData();
+        await writeBin(storeBinId, { inventory, history, shelves });
+      }
     } else {
       // ATE: migrar datos existentes del bin original
       if (storeName === 'ATE') {
@@ -901,6 +906,5 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('color-preview').style.background = document.getElementById('input-color').value;
   syncContainerHighlight('input-container','opt-blanco','opt-dorado');
   renderStoreScreen();
-  const last = localStorage.getItem('last_store');
-  if (last) selectStore(last);
+  // NO auto-entrar aunque haya last_store — siempre pedir contraseña
 });
