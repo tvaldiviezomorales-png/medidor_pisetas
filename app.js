@@ -769,22 +769,13 @@ function downloadTemplate() {
   const wb = XLSX.utils.book_new();
   const ws = {};
 
-  // Encabezados
+  // Encabezados — solo 4 columnas, sin Tara ni Peso Neto
   ws['A1'] = { v:'Código',           t:'s' };
   ws['B1'] = { v:'Envase',           t:'s' };
   ws['C1'] = { v:'Piso del Anaquel', t:'s' };
   ws['D1'] = { v:'Peso Bruto (g)',   t:'s' };
-  ws['E1'] = { v:'Tara (g)',         t:'s' };
-  ws['F1'] = { v:'Peso Neto (g)',    t:'s' };
 
-  // Filas 2-100: fórmulas para Tara y Peso Neto
-  // Tara: VLOOKUP-style usando IFERROR + SEARCH (más compatible que IF anidado)
-  // Usamos fórmula simple: =(B2="dorado")*31.65+(B2="blanco")*31.75
-  // Peso Neto: =D2-E2 (solo si hay peso bruto)
-  for (let r = 2; r <= 100; r++) {
-    ws[`E${r}`] = { f: `(B${r}="dorado")*31.65+(B${r}="blanco")*31.75`, t: 'n' };
-    ws[`F${r}`] = { f: `IF(D${r}="","",IF(E${r}=0,"",D${r}-E${r}))`,    t: 'n' };
-  }
+  // Sin fórmulas — Tara y Neto se calculan automáticamente al importar
 
   // Desplegable en columna B (Envase)
   ws['!dataValidations'] = [
@@ -793,8 +784,8 @@ function downloadTemplate() {
       errorTitle:'Envase inválido', error:'Escribe blanco o dorado' }
   ];
 
-  ws['!cols'] = [{wch:14},{wch:10},{wch:22},{wch:16},{wch:10},{wch:16}];
-  ws['!ref']  = 'A1:F100';
+  ws['!cols'] = [{wch:14},{wch:10},{wch:22},{wch:16}];
+  ws['!ref']  = 'A1:D100';
 
   XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
 
