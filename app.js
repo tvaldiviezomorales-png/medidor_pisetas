@@ -767,37 +767,50 @@ function exportExcel() {
 
 function downloadTemplate() {
   const wb = XLSX.utils.book_new();
+  const ws = {};
 
-  // Generar datos — encabezados + 99 filas vacías
-  const data = [
-    ['Código', 'Envase', 'Piso del Anaquel', 'Peso Bruto (g)', 'Tara (g)', 'Peso Neto (g)']
-  ];
-  for (let i = 0; i < 99; i++) data.push(['', '', '', '', '', '']);
+  // Encabezados
+  ws['A1'] = { v:'Código',           t:'s' };
+  ws['B1'] = { v:'Envase',           t:'s' };
+  ws['C1'] = { v:'Piso del Anaquel', t:'s' };
+  ws['D1'] = { v:'Peso Bruto (g)',   t:'s' };
+  ws['E1'] = { v:'Tara (g)',         t:'s' };
+  ws['F1'] = { v:'Peso Neto (g)',    t:'s' };
 
-  const ws = XLSX.utils.aoa_to_sheet(data);
-  ws['!cols'] = [{wch:14},{wch:10},{wch:22},{wch:16},{wch:10},{wch:16}];
+  // Filas 2-100: fórmulas para Tara y Peso Neto
+  // Tara: VLOOKUP-style usando IFERROR + SEARCH (más compatible que IF anidado)
+  // Usamos fórmula simple: =(B2="dorado")*31.65+(B2="blanco")*31.75
+  // Peso Neto: =D2-E2 (solo si hay peso bruto)
+  for (let r = 2; r <= 100; r++) {
+    ws[`E${r}`] = { f: `(B${r}="dorado")*31.65+(B${r}="blanco")*31.75`, t: 'n' };
+    ws[`F${r}`] = { f: `IF(D${r}="","",IF(E${r}=0,"",D${r}-E${r}))`,    t: 'n' };
+  }
 
-  // Desplegable Envase en columna B
+  // Desplegable en columna B (Envase)
   ws['!dataValidations'] = [
-    { sqref:'B2:B100', type:'list', formula1:'"blanco,dorado"', showDropDown:false,
-      showErrorMessage:true, errorTitle:'Envase inválido', error:'Escribe blanco o dorado' }
+    { sqref:'B2:B100', type:'list', formula1:'"blanco,dorado"',
+      showDropDown:false, showErrorMessage:true,
+      errorTitle:'Envase inválido', error:'Escribe blanco o dorado' }
   ];
+
+  ws['!cols'] = [{wch:14},{wch:10},{wch:22},{wch:16},{wch:10},{wch:16}];
+  ws['!ref']  = 'A1:F100';
 
   XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
 
-  // Hoja de instrucciones con pisos reales de la tienda
+  // Hoja instrucciones con pisos reales
   const pisosList = shelves && shelves.length > 0
-    ? shelves.map((s, i) => [`Piso ${i+1}`, s.name, `Escribe exactamente: ${s.name}`])
+    ? shelves.map((s,i) => [`Piso ${i+1}`, s.name, `Escribe exactamente: ${s.name}`])
     : [['Piso 1','Piso Superior','Escribe exactamente: Piso Superior']];
 
   const instrData = [
-    ['Campo',            'Descripción',                      'Valores válidos'],
-    ['Código',           'Código de la piseta',              'Ej: F1178, M1146'],
-    ['Envase',           'Tipo de envase',                   'blanco  ó  dorado'],
-    ['Piso del Anaquel', 'Nombre exacto del piso',           pisosList.map(p=>p[1]).join(' / ')],
-    ['Peso Bruto (g)',   'Peso total con envase incluido',   'Número. Ej: 282.50'],
-    ['Tara (g)',         'Se calcula al importar',           'blanco=31.75 / dorado=31.65'],
-    ['Peso Neto (g)',    'Se calcula al importar',           'Peso Bruto − Tara'],
+    ['Campo',            'Descripción',                    'Valores válidos'],
+    ['Código',           'Código de la piseta',            'Ej: F1178, M1146'],
+    ['Envase',           'Tipo de envase (desplegable)',   'blanco  ó  dorado'],
+    ['Piso del Anaquel', 'Nombre exacto del piso',         pisosList.map(p=>p[1]).join(' / ')],
+    ['Peso Bruto (g)',   'Peso total con envase incluido', 'Número. Ej: 282.50'],
+    ['Tara (g)',         'Se calcula automático',          'blanco=31.75 / dorado=31.65'],
+    ['Peso Neto (g)',    'Se calcula automático',          'Peso Bruto − Tara'],
     ['','',''],
     ['PISOS DE ESTA TIENDA:','',''],
     ...pisosList
