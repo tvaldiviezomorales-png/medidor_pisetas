@@ -990,6 +990,9 @@ input[type="color"] {
 /* ===== TECLADO NUMÉRICO ACCESO ===== */
 .access-box { max-width: 320px; }
 
+/* El modal de acceso debe estar sobre la pantalla de tiendas */
+#access-modal { z-index: 99999; }
+
 .access-title {
   font-size: 1rem;
   font-weight: 700;
