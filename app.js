@@ -767,45 +767,46 @@ function exportExcel() {
 
 function downloadTemplate() {
   const wb = XLSX.utils.book_new();
-  const ws = {};
 
-  // Columnas: A=Código B=Envase C=Piso D=Peso Bruto E=Tara F=Peso Neto
-  ws['A1'] = { v:'Código',         t:'s' };
-  ws['B1'] = { v:'Envase',         t:'s' };
-  ws['C1'] = { v:'Piso del Anaquel', t:'s' };
-  ws['D1'] = { v:'Peso Bruto (g)', t:'s' };
-  ws['E1'] = { v:'Tara (g)',        t:'s' };
-  ws['F1'] = { v:'Peso Neto (g)',   t:'s' };
+  // Generar datos — encabezados + 99 filas vacías
+  const data = [
+    ['Código', 'Envase', 'Piso del Anaquel', 'Peso Bruto (g)', 'Tara (g)', 'Peso Neto (g)']
+  ];
+  for (let i = 0; i < 99; i++) data.push(['', '', '', '', '', '']);
 
-  // Fórmulas automáticas en filas 2-200
-  for (let r = 2; r <= 200; r++) {
-    ws[`E${r}`] = { f:`IF(B${r}="dorado",31.65,IF(B${r}="blanco",31.75,""))`, t:'n' };
-    ws[`F${r}`] = { f:`IF(D${r}="","",IF(E${r}="","",D${r}-E${r}))`, t:'n' };
-  }
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ws['!cols'] = [{wch:14},{wch:10},{wch:22},{wch:16},{wch:10},{wch:16}];
 
-  // Desplegable Envase
-  const validations = [
-    { sqref:'B2:B200', type:'list', formula1:'"blanco,dorado"', showDropDown:false,
-      showErrorMessage:true, errorTitle:'Envase inválido', error:'Elige blanco o dorado' }
+  // Desplegable Envase en columna B
+  ws['!dataValidations'] = [
+    { sqref:'B2:B100', type:'list', formula1:'"blanco,dorado"', showDropDown:false,
+      showErrorMessage:true, errorTitle:'Envase inválido', error:'Escribe blanco o dorado' }
   ];
 
-  // Desplegable Piso — usa los pisos reales de la tienda
-  if (shelves && shelves.length > 0) {
-    const shelfList = shelves.map(s => s.name).join(',');
-    validations.push({
-      sqref:'C2:C200', type:'list',
-      formula1:`"${shelfList}"`,
-      showDropDown:false,
-      showErrorMessage:true, errorTitle:'Piso inválido',
-      error:`Elige uno de: ${shelves.map(s=>s.name).join(', ')}`
-    });
-  }
-
-  ws['!dataValidations'] = validations;
-  ws['!cols'] = [{wch:14},{wch:10},{wch:20},{wch:16},{wch:10},{wch:16}];
-  ws['!ref'] = 'A1:F200';
-
   XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
+
+  // Hoja de instrucciones con pisos reales de la tienda
+  const pisosList = shelves && shelves.length > 0
+    ? shelves.map((s, i) => [`Piso ${i+1}`, s.name, `Escribe exactamente: ${s.name}`])
+    : [['Piso 1','Piso Superior','Escribe exactamente: Piso Superior']];
+
+  const instrData = [
+    ['Campo',            'Descripción',                      'Valores válidos'],
+    ['Código',           'Código de la piseta',              'Ej: F1178, M1146'],
+    ['Envase',           'Tipo de envase',                   'blanco  ó  dorado'],
+    ['Piso del Anaquel', 'Nombre exacto del piso',           pisosList.map(p=>p[1]).join(' / ')],
+    ['Peso Bruto (g)',   'Peso total con envase incluido',   'Número. Ej: 282.50'],
+    ['Tara (g)',         'Se calcula al importar',           'blanco=31.75 / dorado=31.65'],
+    ['Peso Neto (g)',    'Se calcula al importar',           'Peso Bruto − Tara'],
+    ['','',''],
+    ['PISOS DE ESTA TIENDA:','',''],
+    ...pisosList
+  ];
+
+  const wsI = XLSX.utils.aoa_to_sheet(instrData);
+  wsI['!cols'] = [{wch:20},{wch:34},{wch:38}];
+  XLSX.utils.book_append_sheet(wb, wsI, 'Instrucciones');
+
   XLSX.writeFile(wb, `plantilla_${currentStore || 'pisetas'}.xlsx`);
 }
 
