@@ -191,9 +191,16 @@ function promptStoreCode(name) {
   document.getElementById('access-store-name').textContent = `🏪 ${name}`;
   document.getElementById('access-display').textContent = '_ _ _ _';
   document.getElementById('access-error').style.display = 'none';
-  document.getElementById('access-modal').style.display = 'flex';
-  document.getElementById('access-modal').dataset.store = name;
-  document.getElementById('access-modal').dataset.input = '';
+  document.getElementById('store-select-view').style.display = 'none';
+  document.getElementById('store-pin-view').style.display = 'block';
+  document.getElementById('store-pin-view').dataset.store = name;
+  _numInput = '';
+}
+
+function backToStores() {
+  document.getElementById('store-select-view').style.display = 'block';
+  document.getElementById('store-pin-view').style.display = 'none';
+  _numInput = '';
 }
 
 let _numInput = '';
@@ -223,20 +230,19 @@ function numpadClear() {
 }
 
 function verifyAccessCode() {
-  const name = document.getElementById('access-modal').dataset.store;
+  const name = document.getElementById('store-pin-view').dataset.store;
   if (_numInput !== STORE_CODES[name]) {
     document.getElementById('access-error').style.display = 'block';
     _numInput = '';
     document.getElementById('access-display').textContent = '_ _ _ _';
     return;
   }
-  closeAccessModal();
+  backToStores();
   selectStore(name);
 }
 
 function closeAccessModal() {
-  _numInput = '';
-  document.getElementById('access-modal').style.display = 'none';
+  backToStores();
 }
 
 async function selectStore(name) {

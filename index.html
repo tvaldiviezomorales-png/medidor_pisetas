@@ -12,14 +12,41 @@
 
   <!-- ===== PANTALLA SELECTOR DE TIENDA ===== -->
   <div id="store-screen" class="store-screen">
-    <div class="store-box">
+    <!-- Vista: selección de tienda -->
+    <div id="store-select-view" class="store-box">
       <div class="store-logo">
         <div class="brand-flag"><span></span><span></span><span></span></div>
         <span>PERFUMES EUROPEOS</span>
       </div>
       <h2>¿Cuál es tu tienda?</h2>
-      <p>Selecciona tu tienda para ver y gestionar tu inventario de pisetas.</p>
+      <p>Selecciona tu tienda para ingresar.</p>
       <div class="store-grid" id="store-grid"></div>
+    </div>
+    <!-- Vista: teclado numérico -->
+    <div id="store-pin-view" class="store-box" style="display:none">
+      <div class="store-logo">
+        <div class="brand-flag"><span></span><span></span><span></span></div>
+        <span>PERFUMES EUROPEOS</span>
+      </div>
+      <p class="access-title">🔐 Código de acceso</p>
+      <p class="access-store" id="access-store-name"></p>
+      <div class="access-display" id="access-display">_ _ _ _</div>
+      <p id="access-error" class="access-error" style="display:none">❌ Código incorrecto, intenta de nuevo</p>
+      <div class="numpad">
+        <button class="numpad-btn" onclick="numpadPress('1')">1</button>
+        <button class="numpad-btn" onclick="numpadPress('2')">2</button>
+        <button class="numpad-btn" onclick="numpadPress('3')">3</button>
+        <button class="numpad-btn" onclick="numpadPress('4')">4</button>
+        <button class="numpad-btn" onclick="numpadPress('5')">5</button>
+        <button class="numpad-btn" onclick="numpadPress('6')">6</button>
+        <button class="numpad-btn" onclick="numpadPress('7')">7</button>
+        <button class="numpad-btn" onclick="numpadPress('8')">8</button>
+        <button class="numpad-btn" onclick="numpadPress('9')">9</button>
+        <button class="numpad-btn numpad-clear" onclick="numpadClear()">C</button>
+        <button class="numpad-btn" onclick="numpadPress('0')">0</button>
+        <button class="numpad-btn numpad-del" onclick="numpadDel()">⌫</button>
+      </div>
+      <button class="btn btn-cancel" style="margin-top:16px;width:100%" onclick="backToStores()">← Volver a tiendas</button>
     </div>
   </div>
 
@@ -155,34 +182,6 @@
       <h2>📋 Historial de Movimientos</h2>
       <div id="history-list"></div>
     </section>
-  </div>
-
-  <!-- Modal código de acceso — teclado numérico -->
-  <div id="access-modal" class="modal" style="display:none">
-    <div class="modal-box access-box">
-      <p class="access-title">🔐 Ingresa el código de 4 dígitos</p>
-      <p class="access-store" id="access-store-name"></p>
-      <div class="access-display" id="access-display">_ _ _ _</div>
-      <p id="access-error" class="access-error" style="display:none">❌ Código incorrecto</p>
-      <div class="numpad">
-        <button class="numpad-btn" onclick="numpadPress('1')">1</button>
-        <button class="numpad-btn" onclick="numpadPress('2')">2</button>
-        <button class="numpad-btn" onclick="numpadPress('3')">3</button>
-        <button class="numpad-btn" onclick="numpadPress('4')">4</button>
-        <button class="numpad-btn" onclick="numpadPress('5')">5</button>
-        <button class="numpad-btn" onclick="numpadPress('6')">6</button>
-        <button class="numpad-btn" onclick="numpadPress('7')">7</button>
-        <button class="numpad-btn" onclick="numpadPress('8')">8</button>
-        <button class="numpad-btn" onclick="numpadPress('9')">9</button>
-        <button class="numpad-btn numpad-clear" onclick="numpadClear()">C</button>
-        <button class="numpad-btn" onclick="numpadPress('0')">0</button>
-        <button class="numpad-btn numpad-del" onclick="numpadDel()">⌫</button>
-      </div>
-      <div class="modal-actions" style="margin-top:16px">
-        <button class="btn btn-add" onclick="verifyAccessCode()">OK</button>
-        <button class="btn btn-cancel" onclick="closeAccessModal()">Cancelar</button>
-      </div>
-    </div>
   </div>
 
   <!-- Modal confirmación -->
