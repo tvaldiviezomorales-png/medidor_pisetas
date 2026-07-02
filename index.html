@@ -101,13 +101,22 @@
             <label class="container-opt" id="opt-blanco">
               <input type="radio" name="input-container" value="blanco" checked />
               <span class="container-icon">⬜</span>
-              <span>Blanco<br><small>−31.75 g</small></span>
+              <span>Blanco<br><small>−30.75 g</small></span>
             </label>
             <label class="container-opt" id="opt-dorado">
               <input type="radio" name="input-container" value="dorado" />
               <span class="container-icon">🟨</span>
               <span>Dorado<br><small>−31.65 g</small></span>
             </label>
+            <label class="container-opt" id="opt-otro">
+              <input type="radio" name="input-container" value="otro" />
+              <span class="container-icon">⚙️</span>
+              <span>Otro<br><small>manual</small></span>
+            </label>
+          </div>
+          <div id="input-tare-custom-group" class="tare-custom-group" style="display:none">
+            <label>Tara manual (g)</label>
+            <input type="number" id="input-tare-custom" placeholder="Ej: 28.50" min="0" step="0.01" oninput="updateNetPreview()" style="width:120px" />
           </div>
         </div>
         <div class="form-group">
@@ -227,6 +236,14 @@
               <input type="radio" name="edit-container" value="dorado" />
               <span class="container-icon">🟨</span><span>Dorado</span>
             </label>
+            <label class="container-opt" id="edit-opt-otro">
+              <input type="radio" name="edit-container" value="otro" />
+              <span class="container-icon">⚙️</span><span>Otro</span>
+            </label>
+          </div>
+          <div id="edit-tare-custom-group" class="tare-custom-group" style="display:none">
+            <label>Tara manual (g)</label>
+            <input type="number" id="edit-tare-custom" placeholder="Ej: 28.50" min="0" step="0.01" oninput="updateEditNetPreview()" style="width:120px" />
           </div>
         </div>
         <div class="form-group">

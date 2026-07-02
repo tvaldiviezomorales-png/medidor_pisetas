@@ -1,5 +1,5 @@
 // ===== CONSTANTES =====
-const CONTAINER_TARE = { blanco: 31.75, dorado: 31.65 };
+const CONTAINER_TARE = { blanco: 30.75, dorado: 31.65, otro: 0 }; // "otro" se define manualmente
 
 const STORES = [
   'CALLE 1','LINCE','TRUJILLO','MIRAFLORES','GAMARRA',
@@ -343,15 +343,31 @@ function deleteShelf(id) {
 function closeShelfModal() { document.getElementById('shelf-modal').style.display = 'none'; }
 
 // ===== PESO NETO =====
-function calcNet(gross, container) { return Math.max(0, gross - (CONTAINER_TARE[container] || 0)); }
-function getSelectedContainer(name) { return document.querySelector(`input[name="${name}"]:checked`)?.value || 'blanco'; }
+function calcNet(gross, container, customTare) {
+  const tare = container === 'otro'
+    ? (parseFloat(customTare) || 0)
+    : (CONTAINER_TARE[container] || 0);
+  return Math.max(0, gross - tare);
+}
+
+function getSelectedContainer(name) {
+  return document.querySelector(`input[name="${name}"]:checked`)?.value || 'blanco';
+}
+
+function getCustomTare(prefix) {
+  const el = document.getElementById(`${prefix}-tare-custom`);
+  return el ? el.value : '0';
+}
 
 function updateNetPreview() {
   const gross = parseFloat(document.getElementById('input-weight').value);
   const cont  = getSelectedContainer('input-container');
   const el    = document.getElementById('net-preview');
+  // Mostrar/ocultar campo tara manual
+  const customDiv = document.getElementById('input-tare-custom-group');
+  if (customDiv) customDiv.style.display = cont === 'otro' ? 'flex' : 'none';
   if (isNaN(gross) || gross <= 0) { el.textContent = '— g'; el.className = 'net-preview'; return; }
-  el.textContent = `${calcNet(gross, cont).toFixed(3)} g`;
+  el.textContent = `${calcNet(gross, cont, getCustomTare('input')).toFixed(3)} g`;
   el.className   = 'net-preview net-ok';
 }
 
@@ -359,8 +375,10 @@ function updateEditNetPreview() {
   const gross = parseFloat(document.getElementById('edit-weight').value);
   const cont  = getSelectedContainer('edit-container');
   const el    = document.getElementById('edit-net-preview');
+  const customDiv = document.getElementById('edit-tare-custom-group');
+  if (customDiv) customDiv.style.display = cont === 'otro' ? 'flex' : 'none';
   if (isNaN(gross) || gross <= 0) { el.textContent = '— g'; el.className = 'net-preview'; return; }
-  el.textContent = `${calcNet(gross, cont).toFixed(3)} g`;
+  el.textContent = `${calcNet(gross, cont, getCustomTare('edit')).toFixed(3)} g`;
   el.className   = 'net-preview net-ok';
 }
 
@@ -475,7 +493,8 @@ function addBottles() {
   if (isNaN(gross) || gross <= 0) { alert('Ingresa un peso bruto válido.'); return; }
   if (isNaN(qty)   || qty < 1)    { alert('Cantidad mínima: 1.'); return; }
 
-  const net = calcNet(gross, container);
+  const customTare = getCustomTare('input');
+  const net = calcNet(gross, container, customTare);
   for (let i = 0; i < qty; i++) {
     inventory.push({ id: uid(), code, name, brand, color, shelf, container, weightGross: gross, weightNet: net, addedAt: new Date().toISOString() });
   }
@@ -539,7 +558,7 @@ function saveEdit() {
   b.shelf       = document.getElementById('edit-shelf').value;
   b.container   = getSelectedContainer('edit-container');
   b.weightGross = gross;
-  b.weightNet   = calcNet(gross, b.container);
+  b.weightNet   = calcNet(gross, b.container, getCustomTare('edit'));
   save(); closeEditModal(); renderAll();
 }
 
