@@ -798,9 +798,9 @@ function downloadTemplate() {
 
   // Desplegable en columna B (Envase)
   ws['!dataValidations'] = [
-    { sqref:'B2:B100', type:'list', formula1:'"blanco,dorado"',
+    { sqref:'B2:B100', type:'list', formula1:'"blanco,dorado,otro"',
       showDropDown:false, showErrorMessage:true,
-      errorTitle:'Envase inválido', error:'Escribe blanco o dorado' }
+      errorTitle:'Envase inválido', error:'Escribe blanco, dorado u otro' }
   ];
 
   ws['!cols'] = [{wch:14},{wch:10},{wch:22},{wch:16}];

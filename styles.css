@@ -1058,3 +1058,18 @@ input[type="color"] {
 
 .numpad-clear { color: var(--yellow); }
 .numpad-del   { color: var(--red); font-size: 1.2rem; }
+
+/* ===== TARA CUSTOM (envase Otro) ===== */
+.tare-custom-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.tare-custom-group label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
