@@ -727,12 +727,13 @@ function importExcel(event) {
       rows.forEach(row => {
         const code      = String(row['Código']||row['Codigo']||row['code']||'').trim().toUpperCase();
         const container = String(row['Envase']||row['container']||'blanco').trim().toLowerCase();
+        const customTareExcel = parseFloat(row['Otro']||row['otro']||row['Tara manual']||0) || 0;
         const gross     = parseFloat(row['Peso Bruto (g)']||row['Peso Bruto']||row['Peso']||0);
         if (!code || isNaN(gross) || gross<=0) return;
         const cat   = lookupCatalog(code);
         const name  = cat?.name  || String(row['Nombre']||row['name']||'').trim();
         const brand = cat?.brand || String(row['Marca']||'').trim();
-        const cont  = ['blanco','dorado'].includes(container) ? container : 'blanco';
+        const cont  = ['blanco','dorado','otro'].includes(container) ? container : 'blanco';
         // Resolver piso: buscar por nombre exacto, parcial, o por número (1=primer piso, 2=segundo, etc.)
         const pisoNombre = String(row['Piso del Anaquel']||row['Piso']||row['shelf']||'').trim();
         let foundShelf = null;
@@ -748,7 +749,7 @@ function importExcel(event) {
           }
         }
         const shf = foundShelf?.id || shelves[0]?.id || 'piso-1';
-        inventory.push({ id:uid(), code, name, brand, color:'#c8005a', shelf:shf, container:cont, weightGross:gross, weightNet:calcNet(gross,cont), addedAt:new Date().toISOString() });
+        inventory.push({ id:uid(), code, name, brand, color:'#c8005a', shelf:shf, container:cont, customTare: customTareExcel, weightGross:gross, weightNet:calcNet(gross, cont, customTareExcel), addedAt:new Date().toISOString() });
         added++;
       });
       if (added===0) { alert('No se encontraron filas válidas.'); return; }
@@ -788,46 +789,49 @@ function downloadTemplate() {
   const wb = XLSX.utils.book_new();
   const ws = {};
 
-  // Encabezados — solo 4 columnas, sin Tara ni Peso Neto
+  // Formato exacto: A=Código | B=Envase | C=Otro | D=Piso del Anaquel | E=Peso Bruto (g)
   ws['A1'] = { v:'Código',           t:'s' };
   ws['B1'] = { v:'Envase',           t:'s' };
-  ws['C1'] = { v:'Piso del Anaquel', t:'s' };
-  ws['D1'] = { v:'Peso Bruto (g)',   t:'s' };
+  ws['C1'] = { v:'Otro',             t:'s' };
+  ws['D1'] = { v:'Piso del Anaquel', t:'s' };
+  ws['E1'] = { v:'Peso Bruto (g)',   t:'s' };
 
-  // Sin fórmulas — Tara y Neto se calculan automáticamente al importar
-
-  // Desplegable en columna B (Envase)
+  // Desplegable en columna B (Envase): blanco, dorado, otro
   ws['!dataValidations'] = [
     { sqref:'B2:B100', type:'list', formula1:'"blanco,dorado,otro"',
       showDropDown:false, showErrorMessage:true,
       errorTitle:'Envase inválido', error:'Escribe blanco, dorado u otro' }
   ];
 
-  ws['!cols'] = [{wch:14},{wch:10},{wch:22},{wch:16}];
-  ws['!ref']  = 'A1:D100';
+  ws['!cols'] = [{wch:14},{wch:10},{wch:14},{wch:22},{wch:16}];
+  ws['!ref']  = 'A1:E100';
 
   XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
 
-  // Hoja instrucciones con pisos reales
+  // Hoja instrucciones con pisos reales de la tienda
   const pisosList = shelves && shelves.length > 0
     ? shelves.map((s,i) => [`Piso ${i+1}`, s.name, `Escribe exactamente: ${s.name}`])
     : [['Piso 1','Piso Superior','Escribe exactamente: Piso Superior']];
 
   const instrData = [
-    ['Campo',            'Descripción',                    'Valores válidos'],
-    ['Código',           'Código de la piseta',            'Ej: F1178, M1146'],
-    ['Envase',           'Tipo de envase (desplegable)',   'blanco  ó  dorado'],
-    ['Piso del Anaquel', 'Nombre exacto del piso',         pisosList.map(p=>p[1]).join(' / ')],
-    ['Peso Bruto (g)',   'Peso total con envase incluido', 'Número. Ej: 282.50'],
-    ['Tara (g)',         'Se calcula automático',          'blanco=31.75 / dorado=31.65'],
-    ['Peso Neto (g)',    'Se calcula automático',          'Peso Bruto − Tara'],
+    ['Campo',            'Descripción',                             'Valores válidos'],
+    ['Código',           'Código de la piseta',                     'Ej: F1178, M1146'],
+    ['Envase',           'Tipo de envase (desplegable)',            'blanco / dorado / otro'],
+    ['Otro',             'Tara manual — solo si Envase = otro',     'Número en gramos. Ej: 28.50'],
+    ['Piso del Anaquel', 'Nombre exacto del piso',                  pisosList.map(p=>p[1]).join(' / ')],
+    ['Peso Bruto (g)',   'Peso total con envase incluido',          'Número. Ej: 282.50'],
+    ['','',''],
+    ['TARAS AUTOMÁTICAS:','',''],
+    ['blanco','30.75 g','Se descuenta automáticamente al importar'],
+    ['dorado','31.65 g','Se descuenta automáticamente al importar'],
+    ['otro',  'manual', 'Escribe el peso en la columna C'],
     ['','',''],
     ['PISOS DE ESTA TIENDA:','',''],
     ...pisosList
   ];
 
   const wsI = XLSX.utils.aoa_to_sheet(instrData);
-  wsI['!cols'] = [{wch:20},{wch:34},{wch:38}];
+  wsI['!cols'] = [{wch:20},{wch:38},{wch:38}];
   XLSX.utils.book_append_sheet(wb, wsI, 'Instrucciones');
 
   XLSX.writeFile(wb, `plantilla_${currentStore || 'pisetas'}.xlsx`);
