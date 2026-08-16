@@ -727,13 +727,18 @@ function importExcel(event) {
       rows.forEach(row => {
         const code      = String(row['Código']||row['Codigo']||row['code']||'').trim().toUpperCase();
         const container = String(row['Envase']||row['container']||'blanco').trim().toLowerCase();
-        const customTareExcel = parseFloat(row['Otro']||row['otro']||row['Tara manual']||0) || 0;
+        const customTareExcel = parseFloat(row['Otro']||row['otro']||row['Tara manual']||'') || 0;
         const gross     = parseFloat(row['Peso Bruto (g)']||row['Peso Bruto']||row['Peso']||0);
         if (!code || isNaN(gross) || gross<=0) return;
         const cat   = lookupCatalog(code);
         const name  = cat?.name  || String(row['Nombre']||row['name']||'').trim();
         const brand = cat?.brand || String(row['Marca']||'').trim();
         const cont  = ['blanco','dorado','otro'].includes(container) ? container : 'blanco';
+        // Si columna C tiene valor → usar ese como tara (independiente del envase)
+        // Si columna C vacía → usar tara estándar del envase (blanco=30.75, dorado=31.65)
+        const efectiveCont  = customTareExcel > 0 ? 'otro' : cont;
+        const efectiveTare  = customTareExcel > 0 ? customTareExcel : (CONTAINER_TARE[cont] || 0);
+        const net = Math.max(0, gross - efectiveTare);
         // Resolver piso: buscar por nombre exacto, parcial, o por número (1=primer piso, 2=segundo, etc.)
         const pisoNombre = String(row['Piso del Anaquel']||row['Piso']||row['shelf']||'').trim();
         let foundShelf = null;
@@ -749,7 +754,7 @@ function importExcel(event) {
           }
         }
         const shf = foundShelf?.id || shelves[0]?.id || 'piso-1';
-        inventory.push({ id:uid(), code, name, brand, color:'#c8005a', shelf:shf, container:cont, customTare: customTareExcel, weightGross:gross, weightNet:calcNet(gross, cont, customTareExcel), addedAt:new Date().toISOString() });
+        inventory.push({ id:uid(), code, name, brand, color:'#c8005a', shelf:shf, container:efectiveCont, customTare: customTareExcel, weightGross:gross, weightNet:net, addedAt:new Date().toISOString() });
         added++;
       });
       if (added===0) { alert('No se encontraron filas válidas.'); return; }
